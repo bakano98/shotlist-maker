@@ -13,15 +13,23 @@ const clampT=t=>Math.max(0,Math.min(t, vid.duration||t));
 const sortShots=()=>shots.sort((a,b)=>a.time-b.time);
 function durOf(i){ const end=(i+1<shots.length)?shots[i+1].time:(vid.duration||shots[i].time); return Math.max(0,end-shots[i].time); }
 
-function view(){ const dur=vid.duration||1; const vis=dur/zoom; let start=vid.currentTime-vis/2; start=Math.max(0,Math.min(start,dur-vis)); if(!(start>=0))start=0; return {start,vis,end:start+vis}; }
+let viewStart=null;  // null = recompute; set on zoom change so the view re-centers, then frozen until playhead exits
+function view(){
+  const dur=vid.duration||1, vis=dur/zoom, t=vid.currentTime;
+  if(viewStart===null || t<viewStart-0.001 || t>viewStart+vis+0.001 || vis>=dur-0.01){
+    viewStart=Math.max(0,Math.min(t-vis/2,dur-vis)); if(!(viewStart>=0)) viewStart=0;
+  }
+  return {start:viewStart, vis, end:viewStart+vis};
+}
 const pct=(t,v)=>((t-v.start)/v.vis)*100;
 
 let thumbChain=Promise.resolve();
 function thumbAt(t){
   thumbChain=thumbChain.then(()=>new Promise(res=>{
     const grab=()=>{ thumbVid.removeEventListener("seeked",grab);
-      const c=document.createElement("canvas"); c.width=160; c.height=90;
-      try{ c.getContext("2d").drawImage(thumbVid,0,0,160,90); res(c.toDataURL("image/jpeg",0.7)); }catch{ res(""); } };
+      // ponytail: iOS sometimes hasn't composited the seeked frame yet — one rAF is enough
+      requestAnimationFrame(()=>{ const c=document.createElement("canvas"); c.width=160; c.height=90;
+        try{ c.getContext("2d").drawImage(thumbVid,0,0,160,90); res(c.toDataURL("image/jpeg",0.7)); }catch{ res(""); } }); };
     const target=Math.min(t, thumbVid.duration||t);
     thumbVid.addEventListener("seeked",grab);
     if(Math.abs(thumbVid.currentTime-target)<0.001) grab(); else thumbVid.currentTime=target;
@@ -52,7 +60,11 @@ $("#drop").ondragover=e=>e.preventDefault();
 $("#drop").ondrop=e=>{ e.preventDefault(); if(e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); };
 $("#swap").onclick=()=>$("#file").click();
 
-thumbVid.addEventListener("loadeddata",()=>{ shots.forEach(s=>{ if(!s.thumb) thumbAt(s.time).then(d=>{s.thumb=d;renderTable();}); }); });
+thumbVid.addEventListener("loadeddata",()=>{
+  // ponytail: iOS Safari won't decode frames for canvas until the video has actually run once; play+pause unlocks it
+  thumbVid.play().then(()=>thumbVid.pause()).catch(()=>{});
+  shots.forEach(s=>{ if(!s.thumb) thumbAt(s.time).then(d=>{s.thumb=d;renderTable();}); });
+});
 
 async function addShot(t){
   const s={id:nextId++, time:clampT(t), move:"", focus:"", type:"static wide", remarks:"", thumb:""};
@@ -211,7 +223,7 @@ $("#prevSec").onclick=()=>jumpSection(-1);
 $("#nextSec").onclick=()=>jumpSection(1);
 
 timeline.addEventListener("wheel",e=>{ e.preventDefault(); setZoom(zoom*(e.deltaY<0?1.25:0.8)); },{passive:false});
-function setZoom(z){ zoom=Math.max(1,Math.min(80,z)); renderTimeline(); }
+function setZoom(z){ zoom=Math.max(1,Math.min(80,z)); viewStart=null; renderTimeline(); }
 $("#zoomIn").onclick=()=>setZoom(zoom*1.4);
 $("#zoomOut").onclick=()=>setZoom(zoom*0.7);
 
@@ -222,7 +234,8 @@ vid.addEventListener("timeupdate",()=>{
 });
 vid.addEventListener("loadedmetadata",renderTimeline);
 
-function retime(s,t){ s.time=clampT(t); sortShots(); render(); save(); thumbAt(s.time).then(d=>{s.thumb=d;render();}); }
+function retime(s,t){ if(!isFinite(t)){ renderTable(); return; }   // reject bad input; re-render restores the displayed fmt(s.time)
+  s.time=clampT(t); sortShots(); render(); save(); thumbAt(s.time).then(d=>{s.thumb=d;render();}); }
 
 // ponytail: char-by-char parser, not split(",") — exported fields are quoted and can hold commas/quotes/newlines
 function parseCSV(text){

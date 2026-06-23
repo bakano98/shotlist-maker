@@ -115,8 +115,8 @@
             <button id="delSec" class="btn btn-sm btn-outline-success text-nowrap" title="Remove section here">🗑 Remove</button>
           </div>
           <div class="d-flex align-items-center gap-2 mb-3 flex-nowrap">
-            <button id="prevSec" class="btn btn-sm btn-outline-success text-nowrap" title="Jump to previous section">⟸ Prev section</button>
-            <button id="nextSec" class="btn btn-sm btn-outline-success text-nowrap" title="Jump to next section">Next section ⟹</button>
+            <button id="prevSec" class="btn btn-sm btn-success text-nowrap" title="Jump to previous section">⟸ Prev section</button>
+            <button id="nextSec" class="btn btn-sm btn-success text-nowrap" title="Jump to next section">Next section ⟹</button>
           </div>
         </div>
       </div>
@@ -140,8 +140,8 @@
           <button id="add" class="addrow">＋ Add shot at end (+5s)</button>
         </div>
         <div class="d-flex gap-2 mt-3 flex-nowrap">
-          <button id="export" class="btn btn-sm btn-primary text-nowrap">⬇ Export CSV</button>
           <button id="exportPdf" class="btn btn-sm btn-primary text-nowrap">⬇ Export PDF</button>
+          <button id="export" class="btn btn-sm btn-primary text-nowrap">⬇ Export CSV</button>
           <button id="import" class="btn btn-sm btn-primary text-nowrap">⬆ Import CSV</button>
         </div>
         <input id="importFile" type="file" accept=".csv,text/csv" hidden>
@@ -150,9 +150,11 @@
   </div>
 </div>
 
-<div id="sunflower" title="🌻">🌻</div>
-<video id="thumbvid" muted playsinline style="position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;"></video>
+<footer class="text-center text-brand small py-4 opacity-75">Designed by Sanxithe and Bakano for the Odottemita Community 🌸</footer>
 
-<script src="app.js?v=12"></script>
+<div id="sunflower" title="🌻">🌻</div>
+<video id="thumbvid" muted playsinline preload="auto" style="position:fixed;left:-9999px;top:0;width:160px;height:90px;opacity:0;pointer-events:none;"></video>
+
+<script src="app.js?v=13"></script>
 </body>
 </html>
