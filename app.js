@@ -204,6 +204,34 @@ vid.addEventListener("loadedmetadata",renderTimeline);
 
 function retime(s,t){ s.time=clampT(t); sortShots(); render(); save(); thumbAt(s.time).then(d=>{s.thumb=d;render();}); }
 
+// ponytail: char-by-char parser, not split(",") — exported fields are quoted and can hold commas/quotes/newlines
+function parseCSV(text){
+  const rows=[]; let row=[], f="", q=false;
+  for(let i=0;i<text.length;i++){ const c=text[i];
+    if(q){ if(c==='"'){ if(text[i+1]==='"'){f+='"';i++;} else q=false; } else f+=c; }
+    else if(c==='"') q=true;
+    else if(c===',') { row.push(f); f=""; }
+    else if(c==='\n'||c==='\r'){ if(c==='\r'&&text[i+1]==='\n')i++; row.push(f); rows.push(row); row=[]; f=""; }
+    else f+=c; }
+  if(f!==""||row.length){ row.push(f); rows.push(row); }
+  return rows;
+}
+function importCSV(file){
+  const r=new FileReader();
+  r.onload=()=>{
+    const rows=parseCSV(r.result).filter(c=>c.length>1); rows.shift(); // drop header
+    if(!rows.length) return;
+    shots=rows.map(c=>({ id:nextId++, time:clampT(parseTime(c[1])),
+      move:c[3]||"", focus:c[4]||"", type:SHOT_TYPES.includes(c[5])?c[5]:"static wide",
+      remarks:c[6]||"", thumb:"" }));
+    sortShots(); selId=null; render(); save();
+    shots.forEach(s=>thumbAt(s.time).then(d=>{s.thumb=d;renderTable();}));
+  };
+  r.readAsText(file);
+}
+$("#import").onclick=()=>$("#importFile").click();
+$("#importFile").onchange=e=>{ if(e.target.files[0]) importCSV(e.target.files[0]); e.target.value=""; };
+
 $("#add").onclick=()=>addShot(endTime());
 $("#addHere").onclick=()=>addShot(vid.currentTime);
 $("#export").onclick=()=>{
@@ -218,6 +246,8 @@ document.addEventListener("keydown",e=>{
   if(e.key.toLowerCase()==="m" && !/input|select|textarea/i.test(e.target.tagName) && !$("#app").classList.contains("d-none")){ e.preventDefault(); addShot(vid.currentTime); }
 });
 
+(()=>{ const r=parseCSV('"a","b,c","d""e"\n"x","y\nz","w"');
+  console.assert(r.length===2&&r[0][1]==="b,c"&&r[0][2]==='d"e'&&r[1][1]==="y\nz","parseCSV quotes/commas/newlines"); })();
 console.assert(parseTime("1:30.5")===90.5,"parseTime mm:ss");
 console.assert(fmt(90.5)==="1:30.5","fmt");
 (()=>{ shots=[{time:5},{time:1},{time:3}]; sortShots();
