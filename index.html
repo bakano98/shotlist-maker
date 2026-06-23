@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shot List 🌸</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  :root{
+    --pink:#ff7aa8; --pink-soft:#ffd6e6; --pink-bg:#fff5f9; --butter:#fff3c4;
+    --bs-body-bg:transparent; --bs-body-color:#5a3a4a;
+  }
+  body{background:linear-gradient(160deg,var(--pink-bg),#fdeaf4); min-height:100vh;}
+  .btn-primary{--bs-btn-bg:var(--pink);--bs-btn-border-color:var(--pink);--bs-btn-hover-bg:#ff5c93;--bs-btn-hover-border-color:#ff5c93;--bs-btn-active-bg:#ff5c93;}
+  .btn-outline-primary{--bs-btn-color:var(--pink);--bs-btn-border-color:var(--pink);--bs-btn-hover-bg:var(--pink);--bs-btn-hover-border-color:var(--pink);}
+  .text-brand{color:var(--pink)!important;}
+  .stage{position:sticky;top:0;z-index:5;background:linear-gradient(160deg,var(--pink-bg),#fdeaf4);padding-top:6px;}
+  video{width:100%;max-height:38vh;border-radius:18px;background:#000;display:block;}
+
+  .timeline{position:relative;height:66px;border-radius:14px;background:var(--pink-soft);
+    cursor:ew-resize;overflow:hidden;touch-action:none;user-select:none;}
+  .timeline .band{position:absolute;top:0;height:19px;background:#fff;box-sizing:border-box;
+    border-right:1px solid rgba(120,60,90,.3);z-index:1;cursor:text;}
+  .timeline .band.alt{background:#c7eed6;}
+  .timeline .blabel{position:absolute;top:0;height:19px;max-width:55%;border:none;background:transparent;
+    font-size:10px;font-weight:700;color:#2f5a40;padding:0 4px;z-index:2;}
+  .timeline .blabel:focus{background:#fff;outline:1px solid var(--pink);border-radius:3px;}
+  .timeline .blabel::placeholder{color:rgba(47,90,64,.4);font-weight:500;}
+  .timeline .bhandle{position:absolute;top:0;height:19px;width:9px;transform:translateX(-4.5px);cursor:ew-resize;z-index:3;}
+  .timeline .bhandle:hover{background:rgba(255,122,168,.6);}
+  .timeline .played{position:absolute;left:0;top:0;bottom:0;background:#ffeaf2;}
+  .timeline .playhead{position:absolute;top:-2px;bottom:-2px;width:3px;background:var(--pink);
+    box-shadow:0 0 0 1px #fff;pointer-events:none;z-index:3;}
+  .timeline .playhead::after{content:"";position:absolute;top:-1px;left:-5px;border:6px solid transparent;border-top-color:var(--pink);}
+  .timeline .tick{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,122,168,.4);pointer-events:none;z-index:1;}
+  .timeline .tick span{position:absolute;bottom:1px;left:3px;font-size:9px;line-height:1;color:rgba(120,60,90,.6);white-space:nowrap;}
+  .marker{position:absolute;top:50%;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;
+    background:var(--pink);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;
+    border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.25);cursor:grab;touch-action:none;z-index:4;}
+  .marker.sel{background:#ff3d7f;outline:3px solid var(--butter);}
+
+  .tablewrap{max-height:76vh;overflow:auto;border-radius:16px;border:2px solid var(--pink-soft);background:#fff;}
+  .addrow{position:sticky;bottom:0;width:100%;border:none;border-top:2px solid #fff;background:var(--pink);color:#fff;
+    padding:10px;font-weight:700;z-index:2;box-shadow:0 -3px 8px rgba(255,122,168,.25);}
+  .addrow:hover{background:#ff5c93;}
+  thead th{position:sticky;top:0;background:var(--pink-soft)!important;z-index:1;}
+  tr.shot-sel td{background:var(--butter)!important;}
+  td .form-control{border-color:transparent;background:transparent;}
+  td .form-control:focus{border-color:var(--pink);background:#fff;box-shadow:none;}
+  td textarea{resize:none;overflow:hidden;min-height:32px;white-space:pre-wrap;word-break:break-word;}
+  td .form-select{border:2px solid var(--pink);background-color:#fff;font-weight:600;color:#a02a5a;}
+  td .form-select:focus{box-shadow:0 0 0 .2rem var(--pink-soft);}
+  td.num{font-weight:700;color:var(--pink);text-align:center;cursor:pointer;}
+  td img{width:160px!important;height:90px!important;min-width:160px;max-width:none;object-fit:cover;border-radius:8px;background:#000;cursor:pointer;}
+  tr .del{opacity:0;}
+  tr:hover .del{opacity:1;}
+
+  #sunflower{position:fixed;right:14px;bottom:10px;font-size:42px;z-index:50;
+    filter:drop-shadow(0 2px 3px rgba(0,0,0,.2));animation:sway 4s ease-in-out infinite;}
+  @keyframes sway{0%,100%{transform:rotate(-8deg);}50%{transform:rotate(8deg);}}
+</style>
+</head>
+<body>
+<div class="container-fluid py-3">
+  <h1 class="h4 text-brand mb-3">🌸 Shot List Maker</h1>
+
+  <div id="drop" class="border border-3 border-dashed rounded-4 bg-white text-center p-5 mx-auto"
+       style="max-width:520px;border-style:dashed!important;border-color:var(--pink)!important;cursor:pointer;">
+    <p class="fs-5 mb-1">Drop your <b>.mp4</b> here or click to choose</p>
+    <p class="mb-0 text-brand">your clip stays on your computer 💕</p>
+    <input id="file" type="file" accept="video/mp4,video/*" hidden>
+  </div>
+
+  <div id="app" class="d-none">
+    <div class="row g-3">
+      <div class="col-12 col-md-5" style="padding-left:30px;">
+        <div class="stage">
+          <video id="vid" controls></video>
+
+          <div class="d-flex align-items-center gap-2 my-2 flex-wrap">
+            <button id="zoomOut" class="btn btn-sm btn-outline-primary">🔍−</button>
+            <button id="zoomIn" class="btn btn-sm btn-outline-primary">🔍＋</button>
+            <small class="text-brand">zoom <span id="zoomLbl">1.0×</span> · wheel to zoom · drag to scrub</small>
+            <button id="swap" class="btn btn-sm btn-link text-brand ms-auto">↺ Change video</button>
+          </div>
+
+          <div id="timeline" class="timeline">
+            <div class="played"></div>
+            <div class="playhead"></div>
+          </div>
+
+          <div class="d-flex align-items-center gap-2 mt-3 mb-2 flex-wrap">
+            <button id="addHere" class="btn btn-primary">＋ Add shot at playhead <small class="opacity-75">(M)</small></button>
+          </div>
+          <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+            <button id="addSec" class="btn btn-sm btn-outline-success">＋ Add section (split here)</button>
+            <button id="delSec" class="btn btn-sm btn-outline-success">🗑 Remove section here</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-7" style="padding-right:30px;">
+        <div class="tablewrap">
+          <table class="table table-sm align-middle mb-0">
+            <thead><tr>
+              <th style="width:34px;">#</th>
+              <th style="width:92px;">Time</th>
+              <th style="width:62px;">Length</th>
+              <th style="width:172px;">Thumbnail</th>
+              <th>Camera movement</th>
+              <th>Focus</th>
+              <th style="width:160px;">Shot type</th>
+              <th>Remarks</th>
+              <th style="width:38px;"></th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <button id="add" class="addrow">＋ Add shot at end (+5s)</button>
+        </div>
+        <button id="export" class="btn btn-primary mt-3">⬇ Export CSV</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="sunflower" title="🌻">🌻</div>
+<video id="thumbvid" muted playsinline style="position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;"></video>
+
+<script src="app.js?v=8"></script>
+</body>
+</html>
