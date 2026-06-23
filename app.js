@@ -126,7 +126,7 @@ function renderTable(){
     const timg=td(s.thumb?`<img src="${s.thumb}">`:'<span class="text-muted">…</span>'); if(s.thumb)timg.firstChild.onclick=()=>selectShot(s.id,true);
     // retry if the initial batch (loadeddata) failed to produce a thumb for this shot
     if(!s.thumb && !thumbReq.has(s.id)){ thumbReq.add(s.id); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;renderTable();} else thumbReq.delete(s.id); }); }
-    text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="pan / push…"></textarea>`),s,"move");
+    text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="movement/angle"></textarea>`),s,"move");
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="subject…"></textarea>`),s,"focus");
     const sel=td(`<select class="form-select form-select-sm">${SHOT_TYPES.map(t=>`<option ${t===s.type?"selected":""}>${t}</option>`).join("")}</select>`).firstChild;
     sel.onchange=e=>{ s.type=e.target.value; renderTimeline(); save(); };
@@ -234,9 +234,14 @@ function jumpSection(dir){
 }
 $("#prevSec").onclick=()=>jumpSection(-1);
 $("#nextSec").onclick=()=>jumpSection(1);
+$("#miniToggle").onclick=()=>{
+  const on=document.body.classList.toggle("mini");
+  $("#miniToggle").textContent=on?"⤡":"⤢";
+  if(on){ setZoom(1); }   // lock zoom to 1.0× in minimised mode
+};
 
 timeline.addEventListener("wheel",e=>{ e.preventDefault(); setZoom(zoom*(e.deltaY<0?1.25:0.8)); },{passive:false});
-function setZoom(z){ zoom=Math.max(1,Math.min(80,z)); viewStart=null; renderTimeline(); }
+function setZoom(z){ if(document.body.classList.contains("mini")) z=1; zoom=Math.max(1,Math.min(80,z)); viewStart=null; renderTimeline(); }
 $("#zoomIn").onclick=()=>setZoom(zoom*1.4);
 $("#zoomOut").onclick=()=>setZoom(zoom*0.7);
 
