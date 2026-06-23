@@ -4,7 +4,7 @@ const played=timeline.querySelector(".played"), playhead=timeline.querySelector(
 const SHOT_TYPES=["gimbal choreo","gimbal freestyle","static close-up","static wide"];
 const TYPE_COLOR={"static wide":"#bfe3ff","static close-up":"#bfe3ff","gimbal freestyle":"#ffc2dd","gimbal choreo":"#ffc2dd"};
 
-let shots=[], sections=[], selId=null, nextId=1, zoom=1, storeKey=null, dragSec=-1;
+let shots=[], sections=[], selId=null, nextId=1, zoom=1, storeKey=null, dragSec=-1, editId=null;
 
 const fmt=t=>{ if(!isFinite(t))return"0:00.0"; const m=Math.floor(t/60),s=(t%60).toFixed(1).padStart(4,"0"); return m+":"+s; };
 function parseTime(str){ str=String(str).trim(); if(str.includes(":")){const[m,s]=str.split(":");return (+m)*60+(+s);} return +str; }
@@ -83,9 +83,7 @@ function selectShot(id,seek){ selId=id; const s=shots.find(x=>x.id===id);
   highlight(); renderTimeline(); scrollToRow(id);
 }
 
-const render=()=>{ renderTable(); renderTimeline(); syncAddWidth(); };
-// addrow is width:100% of the *visible* wrap, so it stops short when the table scrolls wider; match table width instead
-function syncAddWidth(){ const t=document.querySelector(".tablewrap table"); if(t)$("#add").style.minWidth=t.offsetWidth+"px"; }
+const render=()=>{ renderTable(); renderTimeline(); };
 function scrollToRow(id){
   const tr=rows.querySelector('tr[data-id="'+id+'"]'); if(!tr)return;
   const wrap=$(".tablewrap"), thead=wrap.querySelector("thead");
@@ -120,7 +118,9 @@ function highlight(){ rows.querySelectorAll("tr").forEach(tr=>tr.classList.toggl
 
 const TICK_STEPS=[0.1,0.25,0.5,1,2,5,10,15,30,60,120,300];
 function renderTimeline(){
-  timeline.querySelectorAll(".marker,.tick,.band,.bhandle").forEach(m=>m.remove());
+  const ae=document.activeElement;  // preserve caret across the rebuilds that fire while typing a section name
+  const keep=(ae&&ae.classList&&ae.classList.contains("blabel"))?{sid:ae.dataset.sid,pos:ae.selectionStart}:null;
+  timeline.querySelectorAll(".marker,.tick,.band,.bhandle,.blabel").forEach(m=>m.remove());
   const v=view();
   played.style.width=Math.max(0,Math.min(100,pct(vid.currentTime,v)))+"%";
   playhead.style.left=pct(vid.currentTime,v)+"%";
@@ -134,17 +134,32 @@ function renderTimeline(){
     const start=s.start, end=secEnd(i);
     if(end<v.start-0.01||start>v.end+0.01) return;
     const L=pct(start,v), R=pct(end,v);
-    const band=document.createElement("div"); band.className="band"+(i%2?" alt":"")+(s.name?"":" empty");
-    band.style.left=L+"%"; band.style.width=Math.max(0,R-L)+"%";
-    band.textContent=s.name||"name…"; band.title=s.name||"";
-    band.onpointerdown=ev=>ev.stopPropagation();
-    band.onclick=()=>{ vid.currentTime=clampT(s.start); };                 // single click: jump to section start
-    band.ondblclick=()=>{ const n=prompt("Section name",s.name);           // double click: rename
-      if(n!==null){ s.name=n.trim(); renderTimeline(); save(); } };
-    timeline.appendChild(band);
+    if(s.id===editId){                                                     // inline rename (double-click/tap)
+      const inp=document.createElement("input"); inp.className="blabel"; inp.dataset.sid=s.id;
+      inp.value=s.name; inp.placeholder="name…";
+      inp.style.left=Math.max(0,L)+"%"; inp.style.width=Math.max(0,R-L)+"%";
+      inp.onpointerdown=ev=>ev.stopPropagation();
+      inp.oninput=ev=>{ s.name=ev.target.value; };
+      const commit=()=>{ if(editId!==s.id)return; editId=null; s.name=s.name.trim(); save(); renderTimeline(); };
+      inp.onkeydown=ev=>{ if(ev.key==="Enter"){ev.preventDefault();commit();} else if(ev.key==="Escape"){editId=null;renderTimeline();} };
+      inp.onblur=commit;
+      timeline.appendChild(inp);
+    } else {
+      const band=document.createElement("div"); band.className="band"+(i%2?" alt":"")+(s.name?"":" empty");
+      band.style.left=L+"%"; band.style.width=Math.max(0,R-L)+"%";
+      band.textContent=s.name||"name…"; band.title=s.name||"";
+      band.onpointerdown=ev=>ev.stopPropagation();
+      let lastTap=0;
+      band.onclick=()=>{ const now=Date.now();                            // single click: jump to start; double: edit
+        if(now-lastTap<350){ lastTap=0; editId=s.id; renderTimeline(); }
+        else { lastTap=now; vid.currentTime=clampT(s.start); } };
+      timeline.appendChild(band);
+    }
     if(i>0){ const h=document.createElement("div"); h.className="bhandle"; h.style.left=L+"%";
       h.onpointerdown=ev=>{ ev.stopPropagation(); dragSec=i; }; timeline.appendChild(h); }
   });
+  if(keep){ const el=timeline.querySelector('.blabel[data-sid="'+keep.sid+'"]'); if(el){ el.focus(); try{el.setSelectionRange(keep.pos,keep.pos);}catch{} } }
+  else if(editId!=null){ const el=timeline.querySelector('.blabel[data-sid="'+editId+'"]'); if(el){ el.focus(); el.select(); } }
   shots.forEach((s,i)=>{
     if(s.time<v.start-0.01||s.time>v.end+0.01)return;
     const m=document.createElement("div"); m.className="marker"+(s.id===selId?" sel":""); m.textContent=i+1;
@@ -186,6 +201,14 @@ document.addEventListener("pointermove",e=>{
 document.addEventListener("pointerup",()=>{ if(dragSec>=0){ dragSec=-1; save(); } });
 $("#addSec").onclick=addSection;
 $("#delSec").onclick=removeSection;
+function jumpSection(dir){
+  if(!sections.length) return;
+  const t=vid.currentTime;
+  if(dir>0){ const nx=sections.find(s=>s.start>t+0.05); if(nx) vid.currentTime=nx.start; }
+  else{ const pr=[...sections].reverse().find(s=>s.start<t-0.05); vid.currentTime=pr?pr.start:0; }
+}
+$("#prevSec").onclick=()=>jumpSection(-1);
+$("#nextSec").onclick=()=>jumpSection(1);
 
 timeline.addEventListener("wheel",e=>{ e.preventDefault(); setZoom(zoom*(e.deltaY<0?1.25:0.8)); },{passive:false});
 function setZoom(z){ zoom=Math.max(1,Math.min(80,z)); renderTimeline(); }
@@ -271,4 +294,9 @@ console.assert(fmt(90.5)==="1:30.5","fmt");
   console.assert(secEnd(0)===10&&sectionIndexAt(4)===0&&sectionIndexAt(12)===1,"section split");
   sections.splice(0,1); if(sections[0].start>0) sections[0].start=0;
   console.assert(sections.length===1&&sections[0].start===0,"section remove");
+  sections=sv; })();
+(()=>{ const sv=sections; sections=[{start:0},{start:10},{start:25}];
+  const next=t=>{const n=sections.find(s=>s.start>t+0.05);return n?n.start:t;};
+  const prev=t=>{const p=[...sections].reverse().find(s=>s.start<t-0.05);return p?p.start:0;};
+  console.assert(next(3)===10&&next(10)===25&&prev(12)===10&&prev(0)===0,"section jump");
   sections=sv; })();

@@ -26,6 +26,8 @@
     font-size:10px;font-weight:700;color:#2f5a40;padding:0 5px;}
   .timeline .band.alt{background:#c7eed6;}
   .timeline .band.empty{color:rgba(47,90,64,.45);font-weight:500;}
+  .timeline .blabel{position:absolute;bottom:0;height:20px;box-sizing:border-box;background:#fff;
+    border:none;outline:2px solid var(--pink);border-radius:3px;font-size:10px;font-weight:700;color:#2f5a40;padding:0 5px;z-index:4;}
   .timeline .bhandle{position:absolute;bottom:0;height:20px;width:11px;transform:translateX(-5.5px);cursor:ew-resize;z-index:3;}
   .timeline .bhandle:hover{background:rgba(255,122,168,.6);}
   .timeline .played{position:absolute;left:0;top:0;bottom:0;background:#ffeaf2;}
@@ -40,7 +42,7 @@
   .marker.sel{background:#ff3d7f;outline:3px solid var(--butter);}
 
   .tablewrap{max-height:76vh;overflow:auto;border-radius:16px;border:2px solid var(--pink-soft);background:#fff;}
-  .addrow{position:sticky;bottom:0;width:100%;border:none;border-top:2px solid #fff;background:var(--pink);color:#fff;
+  .addrow{position:sticky;left:0;bottom:0;width:100%;border:none;border-top:2px solid #fff;background:var(--pink);color:#fff;
     padding:10px;font-weight:700;z-index:2;box-shadow:0 -3px 8px rgba(255,122,168,.25);}
   .addrow:hover{background:#ff5c93;}
   thead th{position:sticky;top:0;background:var(--pink-soft)!important;z-index:1;}
@@ -73,7 +75,6 @@
     th:nth-child(7),td:nth-child(7){min-width:150px;}   /* shot type (fits "gimbal freestyle") */
     th:nth-child(8),td:nth-child(8){min-width:160px;}   /* remarks */
     .tablewrap{max-height:none;}                        /* drop nested 76vh scroll; let page scroll on phones */
-    .addrow{text-align:left;padding-left:16px;}         /* button spans full table width; keep label visible at scroll 0 */
     tr .del{opacity:1;}                                 /* width-based fallback: hover:none misses emulators/touch laptops */
     #sunflower{font-size:30px;right:6px;}
   }
@@ -113,6 +114,10 @@
             <button id="addSec" class="btn btn-sm btn-outline-success text-nowrap" title="Add section (split here)">＋ Split</button>
             <button id="delSec" class="btn btn-sm btn-outline-success text-nowrap" title="Remove section here">🗑 Remove</button>
           </div>
+          <div class="d-flex align-items-center gap-2 mb-3 flex-nowrap">
+            <button id="prevSec" class="btn btn-sm btn-outline-primary text-nowrap" title="Jump to previous section">⟸ Prev section</button>
+            <button id="nextSec" class="btn btn-sm btn-outline-primary text-nowrap" title="Jump to next section">Next section ⟹</button>
+          </div>
         </div>
       </div>
 
@@ -146,6 +151,6 @@
 <div id="sunflower" title="🌻">🌻</div>
 <video id="thumbvid" muted playsinline style="position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;"></video>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
