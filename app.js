@@ -28,17 +28,20 @@ let thumbChain=Promise.resolve();
 function capture(t){
   return new Promise(res=>{
     let done=false;
-    const finish=v=>{ if(done)return; done=true; thumbVid.removeEventListener("seeked",grab); res(v); };
-    const grab=()=>{
-      // ponytail: iOS sometimes hasn't composited the seeked frame yet — one rAF is enough
-      requestAnimationFrame(()=>{ const c=document.createElement("canvas"); c.width=160; c.height=90;
-        try{ c.getContext("2d").drawImage(thumbVid,0,0,160,90); finish(c.toDataURL("image/jpeg",0.7)); }catch{ finish(""); } });
-    };
+    const finish=v=>{ if(done)return; done=true; thumbVid.removeEventListener("seeked",onSeeked); res(v); };
+    const draw=()=>{ if(done)return;
+      try{ const c=document.createElement("canvas"); c.width=160; c.height=90;
+        c.getContext("2d").drawImage(thumbVid,0,0,160,90); finish(c.toDataURL("image/jpeg",0.7)); }catch{ finish(""); } };
+    // rAF gives iOS a paint tick to composite the seek frame; setTimeout is the backstop (rAF is paused on backgrounded tabs)
+    const schedule=()=>{ requestAnimationFrame(draw); setTimeout(draw,60); };
+    const onSeeked=()=>schedule();
     const target=Math.min(t, thumbVid.duration||t);
-    thumbVid.addEventListener("seeked",grab);
-    // ponytail: no inner timeout fallback — if seeked never fires, the outer race in thumbAt resolves with "" instead of
-    // letting drawImage capture a stale/black frame from an un-seeked decoder
-    if(Math.abs(thumbVid.currentTime-target)<0.001) grab(); else thumbVid.currentTime=target;
+    // ponytail: register BOTH frame signals and let whichever fires first win — Chromium fires `seeked` (rVFC doesn't fire
+    // for paused seeks), iOS Safari presents the seek frame to rVFC; neither alone is reliable across both
+    thumbVid.addEventListener("seeked",onSeeked);
+    if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(draw);
+    if(Math.abs(thumbVid.currentTime-target)<0.001) schedule();  // already there → no seek event coming
+    else thumbVid.currentTime=target;
   });
 }
 function thumbAt(t){
