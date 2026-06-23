@@ -83,7 +83,9 @@ function selectShot(id,seek){ selId=id; const s=shots.find(x=>x.id===id);
   highlight(); renderTimeline(); scrollToRow(id);
 }
 
-const render=()=>{ renderTable(); renderTimeline(); };
+const render=()=>{ renderTable(); renderTimeline(); syncAddWidth(); };
+// addrow is width:100% of the *visible* wrap, so it stops short when the table scrolls wider; match table width instead
+function syncAddWidth(){ const t=document.querySelector(".tablewrap table"); if(t)$("#add").style.minWidth=t.offsetWidth+"px"; }
 function scrollToRow(id){
   const tr=rows.querySelector('tr[data-id="'+id+'"]'); if(!tr)return;
   const wrap=$(".tablewrap"), thead=wrap.querySelector("thead");
@@ -118,9 +120,7 @@ function highlight(){ rows.querySelectorAll("tr").forEach(tr=>tr.classList.toggl
 
 const TICK_STEPS=[0.1,0.25,0.5,1,2,5,10,15,30,60,120,300];
 function renderTimeline(){
-  const ae=document.activeElement;
-  const keep=(ae&&ae.classList&&ae.classList.contains("blabel"))?{sid:ae.dataset.sid,pos:ae.selectionStart}:null;
-  timeline.querySelectorAll(".marker,.tick,.band,.blabel,.bhandle").forEach(m=>m.remove());
+  timeline.querySelectorAll(".marker,.tick,.band,.bhandle").forEach(m=>m.remove());
   const v=view();
   played.style.width=Math.max(0,Math.min(100,pct(vid.currentTime,v)))+"%";
   playhead.style.left=pct(vid.currentTime,v)+"%";
@@ -134,20 +134,17 @@ function renderTimeline(){
     const start=s.start, end=secEnd(i);
     if(end<v.start-0.01||start>v.end+0.01) return;
     const L=pct(start,v), R=pct(end,v);
-    const band=document.createElement("div"); band.className="band"+(i%2?" alt":"");
-    band.style.left=L+"%"; band.style.width=(R-L)+"%";
+    const band=document.createElement("div"); band.className="band"+(i%2?" alt":"")+(s.name?"":" empty");
+    band.style.left=L+"%"; band.style.width=Math.max(0,R-L)+"%";
+    band.textContent=s.name||"name…"; band.title=s.name||"";
     band.onpointerdown=ev=>ev.stopPropagation();
-    band.onclick=()=>{ const inp=timeline.querySelector('.blabel[data-sid="'+s.id+'"]'); if(inp)inp.focus(); };
+    band.onclick=()=>{ vid.currentTime=clampT(s.start); };                 // single click: jump to section start
+    band.ondblclick=()=>{ const n=prompt("Section name",s.name);           // double click: rename
+      if(n!==null){ s.name=n.trim(); renderTimeline(); save(); } };
     timeline.appendChild(band);
-    const lab=document.createElement("input"); lab.className="blabel"; lab.dataset.sid=s.id;
-    lab.value=s.name; lab.placeholder="name…"; lab.style.left=Math.max(0,L)+"%";
-    lab.onpointerdown=ev=>ev.stopPropagation();
-    lab.oninput=ev=>{ s.name=ev.target.value; }; lab.onchange=ev=>{ s.name=ev.target.value; save(); };
-    timeline.appendChild(lab);
     if(i>0){ const h=document.createElement("div"); h.className="bhandle"; h.style.left=L+"%";
       h.onpointerdown=ev=>{ ev.stopPropagation(); dragSec=i; }; timeline.appendChild(h); }
   });
-  if(keep){ const el=timeline.querySelector('.blabel[data-sid="'+keep.sid+'"]'); if(el){ el.focus(); try{el.setSelectionRange(keep.pos,keep.pos);}catch{} } }
   shots.forEach((s,i)=>{
     if(s.time<v.start-0.01||s.time>v.end+0.01)return;
     const m=document.createElement("div"); m.className="marker"+(s.id===selId?" sel":""); m.textContent=i+1;
@@ -240,6 +237,23 @@ $("#export").onclick=()=>{
   const lines=[head.join(",")];
   shots.forEach((s,i)=>lines.push([i+1,fmt(s.time),durOf(i).toFixed(1),s.move,s.focus,s.type,s.remarks].map(q).join(",")));
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"})); a.download="shotlist.csv"; a.click();
+};
+
+// ponytail: print-to-PDF via a popup, not a PDF lib — thumbnails are data URLs so they embed for free
+const esc=v=>String(v).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])).replace(/\n/g,"<br>");
+$("#exportPdf").onclick=()=>{
+  const body=shots.map((s,i)=>`<tr><td>${i+1}</td><td>${fmt(s.time)}</td><td>${durOf(i).toFixed(1)}s</td>`+
+    `<td>${s.thumb?`<img src="${s.thumb}">`:""}</td><td>${esc(s.move)}</td><td>${esc(s.focus)}</td>`+
+    `<td>${esc(s.type)}</td><td>${esc(s.remarks)}</td></tr>`).join("");
+  const html=`<!doctype html><meta charset="utf-8"><title>shotlist</title><style>
+    body{font-family:system-ui,sans-serif;margin:16px;color:#3a2a33;}h2{color:#ff5c93;}
+    table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:5px 6px;font-size:11px;vertical-align:top;text-align:left;}
+    thead th{background:#ffd6e6;}img{width:160px;height:90px;object-fit:cover;border-radius:4px;}tr{break-inside:avoid;}
+    </style><h2>🌸 Shot List</h2><table><thead><tr><th>#</th><th>Time</th><th>Length</th><th>Thumbnail</th>
+    <th>Camera movement</th><th>Focus</th><th>Shot type</th><th>Remarks</th></tr></thead><tbody>${body}</tbody></table>`;
+  const w=window.open("","_blank"); if(!w){ alert("Allow pop-ups to export PDF"); return; }
+  w.document.write(html); w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); },300);
 };
 
 document.addEventListener("keydown",e=>{
