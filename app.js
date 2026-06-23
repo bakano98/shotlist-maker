@@ -36,7 +36,8 @@ function capture(t){
     };
     const target=Math.min(t, thumbVid.duration||t);
     thumbVid.addEventListener("seeked",grab);
-    setTimeout(()=>{ if(!done) grab(); }, 1500);  // inner safety: seeked may never fire on iOS
+    // ponytail: no inner timeout fallback — if seeked never fires, the outer race in thumbAt resolves with "" instead of
+    // letting drawImage capture a stale/black frame from an un-seeked decoder
     if(Math.abs(thumbVid.currentTime-target)<0.001) grab(); else thumbVid.currentTime=target;
   });
 }
