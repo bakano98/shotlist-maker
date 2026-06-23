@@ -5,6 +5,7 @@ const SHOT_TYPES=["gimbal choreo","gimbal freestyle","static close-up","static w
 const TYPE_COLOR={"static wide":"#bfe3ff","static close-up":"#bfe3ff","gimbal freestyle":"#ffc2dd","gimbal choreo":"#ffc2dd"};
 
 let shots=[], sections=[], selId=null, nextId=1, zoom=1, storeKey=null, dragSec=-1, editId=null;
+const lastSecTap={};  // keyed by section id; survives timeupdate-triggered re-renders that swap the DOM element
 
 const fmt=t=>{ if(!isFinite(t))return"0:00.0"; const m=Math.floor(t/60),s=(t%60).toFixed(1).padStart(4,"0"); return m+":"+s; };
 function parseTime(str){ str=String(str).trim(); if(str.includes(":")){const[m,s]=str.split(":");return (+m)*60+(+s);} return +str; }
@@ -149,10 +150,9 @@ function renderTimeline(){
       band.style.left=L+"%"; band.style.width=Math.max(0,R-L)+"%";
       band.textContent=s.name||"name…"; band.title=s.name||"";
       band.onpointerdown=ev=>ev.stopPropagation();
-      let lastTap=0;
       band.onclick=()=>{ const now=Date.now();                            // single click: jump to start; double: edit
-        if(now-lastTap<350){ lastTap=0; editId=s.id; renderTimeline(); }
-        else { lastTap=now; vid.currentTime=clampT(s.start); } };
+        if(now-(lastSecTap[s.id]||0)<350){ lastSecTap[s.id]=0; editId=s.id; renderTimeline(); }
+        else { lastSecTap[s.id]=now; vid.currentTime=clampT(s.start); } };
       timeline.appendChild(band);
     }
     if(i>0){ const h=document.createElement("div"); h.className="bhandle"; h.style.left=L+"%";
