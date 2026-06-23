@@ -139,9 +139,11 @@
           </table>
           <button id="add" class="addrow">＋ Add shot at end (+5s)</button>
         </div>
-        <button id="export" class="btn btn-primary mt-3">⬇ Export CSV</button>
-        <button id="exportPdf" class="btn btn-primary mt-3 ms-2">⬇ Export PDF</button>
-        <button id="import" class="btn btn-primary mt-3 ms-2">⬆ Import CSV</button>
+        <div class="d-flex gap-2 mt-3 flex-nowrap">
+          <button id="export" class="btn btn-sm btn-primary text-nowrap">⬇ Export CSV</button>
+          <button id="exportPdf" class="btn btn-sm btn-primary text-nowrap">⬇ Export PDF</button>
+          <button id="import" class="btn btn-sm btn-primary text-nowrap">⬆ Import CSV</button>
+        </div>
         <input id="importFile" type="file" accept=".csv,text/csv" hidden>
       </div>
     </div>
