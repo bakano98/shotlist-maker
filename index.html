@@ -165,7 +165,8 @@
 
 <footer class="text-center text-brand small py-4 opacity-75">Designed by Sanxithe and Bakano for the Odottemita Community 🌻</footer>
 
-<video id="thumbvid" muted playsinline preload="auto" style="position:fixed;left:-9999px;top:0;width:160px;height:90px;opacity:0;pointer-events:none;"></video>
+<!-- kept inside the viewport (iOS WebKit won't decode a fully offscreen video) but tiny + near-invisible -->
+<video id="thumbvid" muted playsinline webkit-playsinline preload="auto" style="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;"></video>
 
 <script src="app.js?v=21"></script>
 </body>

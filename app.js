@@ -25,23 +25,45 @@ function view(){
 const pct=(t,v)=>((t-v.start)/v.vis)*100;
 
 let thumbChain=Promise.resolve();
+// returns true when the canvas frame is essentially all black — iOS hands those back before the decoder has presented
+function isBlank(ctx,w,h){
+  try{ const d=ctx.getImageData(0,0,w,h).data;
+    for(let i=0;i<d.length;i+=4){ if(d[i]>8||d[i+1]>8||d[i+2]>8) return false; }
+    return true;
+  }catch{ return false; }  // a same-origin blob shouldn't taint the canvas, but if we can't read it, assume the frame is real
+}
+// iOS WebKit never presents a frame to <canvas> for a *paused* seek — drawImage just yields black. The reliable HTML5
+// trick: a muted inline video may play without a user gesture, and *playing* is what forces the decoder to present
+// frames. So we seek, play, grab the first frame at/after the target (rVFC hands us a guaranteed-presented frame),
+// then pause again. Chromium, which fired `seeked` for paused seeks before, keeps working via the same path.
 function capture(t){
   return new Promise(res=>{
-    let done=false;
-    const finish=v=>{ if(done)return; done=true; thumbVid.removeEventListener("seeked",onSeeked); res(v); };
-    const draw=()=>{ if(done)return;
-      try{ const c=document.createElement("canvas"); c.width=160; c.height=90;
-        c.getContext("2d").drawImage(thumbVid,0,0,160,90); finish(c.toDataURL("image/jpeg",0.7)); }catch{ finish(""); } };
-    // rAF gives iOS a paint tick to composite the seek frame; setTimeout is the backstop (rAF is paused on backgrounded tabs)
-    const schedule=()=>{ requestAnimationFrame(draw); setTimeout(draw,60); };
-    const onSeeked=()=>schedule();
+    let done=false, tmo;
     const target=Math.min(t, thumbVid.duration||t);
-    // ponytail: register BOTH frame signals and let whichever fires first win — Chromium fires `seeked` (rVFC doesn't fire
-    // for paused seeks), iOS Safari presents the seek frame to rVFC; neither alone is reliable across both
-    thumbVid.addEventListener("seeked",onSeeked);
-    if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(draw);
-    if(Math.abs(thumbVid.currentTime-target)<0.001) schedule();  // already there → no seek event coming
-    else thumbVid.currentTime=target;
+    const grab=force=>{ if(done)return true;
+      try{ const c=document.createElement("canvas"); c.width=160; c.height=90;
+        const ctx=c.getContext("2d",{willReadFrequently:true}); ctx.drawImage(thumbVid,0,0,160,90);
+        if(!force && isBlank(ctx,c.width,c.height)) return false;  // decoder hasn't presented a frame yet → keep waiting
+        finish(c.toDataURL("image/jpeg",0.7)); return true;
+      }catch{ finish(""); return true; }  // secured/tainted canvas: bail rather than hang
+    };
+    // rVFC delivers a frame that is already presented, so once mediaTime reaches the target it's safe to grab as-is
+    const onFrame=(now,meta)=>{ if(done)return;
+      if(meta.mediaTime>=target-0.05){ grab(true); return; }
+      if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(onFrame);
+    };
+    // fallback for engines without rVFC: presentation isn't guaranteed here, so reject obviously-black frames
+    const onProgress=()=>{ if(done)return; if(thumbVid.currentTime>=target-0.05) grab(false); };
+    const cleanup=()=>{ clearTimeout(tmo);
+      thumbVid.removeEventListener("timeupdate",onProgress); thumbVid.removeEventListener("seeked",onProgress); };
+    const finish=v=>{ if(done)return; done=true; cleanup(); try{thumbVid.pause();}catch{} res(v); };
+
+    tmo=setTimeout(()=>finish(""),2000);  // self-heal: never leave thumbVid playing if frames never arrive
+    thumbVid.addEventListener("timeupdate",onProgress);
+    thumbVid.addEventListener("seeked",onProgress);
+    if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(onFrame);
+    if(Math.abs(thumbVid.currentTime-target)>=0.05) thumbVid.currentTime=target;
+    const p=thumbVid.play(); if(p&&p.catch) p.catch(()=>{});  // muted+playsinline ⇒ allowed; if blocked, seeked-fallback still tries
   });
 }
 function thumbAt(t){
