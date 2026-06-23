@@ -174,7 +174,10 @@ timeline.addEventListener("pointerdown",e=>{
   timeline.onpointermove=scrub; timeline.onpointerup=()=>{ timeline.onpointermove=null; timeline.onpointerup=null; };
 });
 function scrub(e){ const v=view(); const r=timeline.getBoundingClientRect();
-  let x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)); vid.currentTime=v.start+x*v.vis; }
+  let x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)); const t=v.start+x*v.vis;
+  // ponytail: fastSeek decodes to nearest keyframe live; plain currentTime coalesces seeks so frames only show on release
+  if(vid.fastSeek){ try{vid.fastSeek(t);}catch{vid.currentTime=t;} } else vid.currentTime=t;
+  played.style.width=Math.max(0,Math.min(100,pct(t,v)))+"%"; playhead.style.left=pct(t,v)+"%"; }
 
 document.addEventListener("pointermove",e=>{
   if(dragSec<0) return;
