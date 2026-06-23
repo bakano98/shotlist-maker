@@ -6,6 +6,7 @@ const TYPE_COLOR={"static wide":"#bfe3ff","static close-up":"#bfe3ff","gimbal fr
 
 let shots=[], sections=[], selId=null, nextId=1, zoom=1, storeKey=null, dragSec=-1, editId=null;
 const lastSecTap={};  // keyed by section id; survives timeupdate-triggered re-renders that swap the DOM element
+const thumbReq=new Set();  // shot ids we've already kicked off a thumbnail request for, so renderTable retries don't spin
 
 const fmt=t=>{ if(!isFinite(t))return"0:00.0"; const m=Math.floor(t/60),s=(t%60).toFixed(1).padStart(4,"0"); return m+":"+s; };
 function parseTime(str){ str=String(str).trim(); if(str.includes(":")){const[m,s]=str.split(":");return (+m)*60+(+s);} return +str; }
@@ -24,17 +25,27 @@ function view(){
 const pct=(t,v)=>((t-v.start)/v.vis)*100;
 
 let thumbChain=Promise.resolve();
-function thumbAt(t){
-  thumbChain=thumbChain.then(()=>new Promise(res=>{
-    const grab=()=>{ thumbVid.removeEventListener("seeked",grab);
+function capture(t){
+  return new Promise(res=>{
+    let done=false;
+    const finish=v=>{ if(done)return; done=true; thumbVid.removeEventListener("seeked",grab); res(v); };
+    const grab=()=>{
       // ponytail: iOS sometimes hasn't composited the seeked frame yet — one rAF is enough
       requestAnimationFrame(()=>{ const c=document.createElement("canvas"); c.width=160; c.height=90;
-        try{ c.getContext("2d").drawImage(thumbVid,0,0,160,90); res(c.toDataURL("image/jpeg",0.7)); }catch{ res(""); } }); };
+        try{ c.getContext("2d").drawImage(thumbVid,0,0,160,90); finish(c.toDataURL("image/jpeg",0.7)); }catch{ finish(""); } });
+    };
     const target=Math.min(t, thumbVid.duration||t);
     thumbVid.addEventListener("seeked",grab);
+    setTimeout(()=>{ if(!done) grab(); }, 1500);  // inner safety: seeked may never fire on iOS
     if(Math.abs(thumbVid.currentTime-target)<0.001) grab(); else thumbVid.currentTime=target;
-  }));
-  return thumbChain;
+  });
+}
+function thumbAt(t){
+  // ponytail: race the chain itself against a hard 2.5s timeout, so one hung capture can't block every future thumbnail
+  const work=thumbChain.then(()=>capture(t));
+  const guarded=Promise.race([work, new Promise(res=>setTimeout(()=>res(""),2500))]);
+  thumbChain=guarded;  // future thumbAt calls queue behind the guarded promise, which is guaranteed to resolve
+  return guarded;
 }
 
 function save(){ if(!storeKey)return; try{ localStorage.setItem(storeKey, JSON.stringify({
@@ -63,13 +74,13 @@ $("#swap").onclick=()=>$("#file").click();
 thumbVid.addEventListener("loadeddata",()=>{
   // ponytail: iOS Safari won't decode frames for canvas until the video has actually run once; play+pause unlocks it
   thumbVid.play().then(()=>thumbVid.pause()).catch(()=>{});
-  shots.forEach(s=>{ if(!s.thumb) thumbAt(s.time).then(d=>{s.thumb=d;renderTable();}); });
+  shots.forEach(s=>{ if(!s.thumb) thumbAt(s.time).then(d=>{ if(d){s.thumb=d;renderTable();} }); });
 });
 
 async function addShot(t){
   const s={id:nextId++, time:clampT(t), move:"", focus:"", type:"static wide", remarks:"", thumb:""};
   shots.push(s); sortShots(); selId=s.id; render(); save();
-  s.thumb=await thumbAt(s.time); render();
+  const d=await thumbAt(s.time); if(d){ s.thumb=d; render(); }
 }
 function endTime(){ if(!shots.length) return vid.currentTime; const last=shots[shots.length-1].time; return Math.min(last+5, vid.duration||last+5); }
 
@@ -113,6 +124,8 @@ function renderTable(){
     td(`<input class="form-control form-control-sm" value="${fmt(s.time)}">`).firstChild.onchange=e=>retime(s,parseTime(e.target.value));
     td(durOf(i).toFixed(1)+"s","text-center text-brand");
     const timg=td(s.thumb?`<img src="${s.thumb}">`:'<span class="text-muted">…</span>'); if(s.thumb)timg.firstChild.onclick=()=>selectShot(s.id,true);
+    // retry if the initial batch (loadeddata) failed to produce a thumb for this shot
+    if(!s.thumb && !thumbReq.has(s.id)){ thumbReq.add(s.id); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;renderTable();} else thumbReq.delete(s.id); }); }
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="pan / push…"></textarea>`),s,"move");
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="subject…"></textarea>`),s,"focus");
     const sel=td(`<select class="form-select form-select-sm">${SHOT_TYPES.map(t=>`<option ${t===s.type?"selected":""}>${t}</option>`).join("")}</select>`).firstChild;
@@ -187,7 +200,7 @@ function dragMarker(el,s){
       let x=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
       s.time=clampT(v.start+x*v.vis); sortShots(); el.style.left=pct(s.time,v)+"%"; renderTable(); };
     el.onpointerup=()=>{ el.onpointermove=null; el.onpointerup=null;
-      if(moved){ render(); thumbAt(s.time).then(d=>{s.thumb=d;render();}); save(); }
+      if(moved){ render(); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;render();} }); save(); }
       else selectShot(s.id,true); };
   });
 }
@@ -235,7 +248,7 @@ vid.addEventListener("timeupdate",()=>{
 vid.addEventListener("loadedmetadata",renderTimeline);
 
 function retime(s,t){ if(!isFinite(t)){ renderTable(); return; }   // reject bad input; re-render restores the displayed fmt(s.time)
-  s.time=clampT(t); sortShots(); render(); save(); thumbAt(s.time).then(d=>{s.thumb=d;render();}); }
+  s.time=clampT(t); sortShots(); render(); save(); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;render();} }); }
 
 // ponytail: char-by-char parser, not split(",") — exported fields are quoted and can hold commas/quotes/newlines
 function parseCSV(text){
