@@ -10,7 +10,15 @@
     --pink:#ff7aa8; --pink-soft:#ffd6e6; --pink-bg:#fff5f9; --butter:#fff3c4;
     --bs-body-bg:transparent; --bs-body-color:#5a3a4a;
   }
-  body{background:linear-gradient(160deg,var(--pink-bg),#fdeaf4); min-height:100vh;}
+  body{
+    background:linear-gradient(160deg,var(--pink-bg),#fdeaf4); 
+    min-height:100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  footer {
+    margin-top: auto;
+  }
   .btn-primary{--bs-btn-bg:var(--pink);--bs-btn-border-color:var(--pink);--bs-btn-hover-bg:#ff5c93;--bs-btn-hover-border-color:#ff5c93;--bs-btn-active-bg:#ff5c93;}
   .btn-outline-primary{--bs-btn-color:var(--pink);--bs-btn-border-color:var(--pink);--bs-btn-hover-bg:var(--pink);--bs-btn-hover-border-color:var(--pink);}
   .text-brand{color:var(--pink)!important;}
@@ -57,27 +65,6 @@
   tr .del{opacity:0;}
   tr:hover .del{opacity:1;}
 
-  #sunflower{position:fixed;right:14px;bottom:10px;font-size:42px;z-index:50;
-    filter:drop-shadow(0 2px 3px rgba(0,0,0,.2));animation:sway 4s ease-in-out infinite;}
-  @keyframes sway{0%,100%{transform:rotate(-8deg);}50%{transform:rotate(8deg);}}
-
-  /* ponytail: Bootstrap grid already stacks; these only patch touch + small-screen gaps */
-  @media (hover:none){ tr .del{opacity:1;} }          /* no hover on touch → delete was unreachable */
-  @media (max-width:767px){
-    .container-fluid{padding-left:8px;padding-right:8px;}
-    .col-12.col-md-5{padding-left:8px!important;} .col-12.col-md-7{padding-right:8px!important;}
-    video{max-height:30vh;}
-    td img{width:96px!important;height:54px!important;min-width:96px;}
-    th[style*="172px"]{width:108px!important;}
-    /* give the squashable text columns room; table overflows → wrap scrolls horizontally */
-    th:nth-child(5),td:nth-child(5){min-width:110px;}   /* camera movement */
-    th:nth-child(6),td:nth-child(6){min-width:120px;}   /* focus */
-    th:nth-child(7),td:nth-child(7){min-width:150px;}   /* shot type (fits "gimbal freestyle") */
-    th:nth-child(8),td:nth-child(8){min-width:160px;}   /* remarks */
-    .tablewrap{max-height:none;}                        /* drop nested 76vh scroll; let page scroll on phones */
-    tr .del{opacity:1;}                                 /* width-based fallback: hover:none misses emulators/touch laptops */
-    #sunflower{font-size:30px;right:6px;}
-  }
 </style>
 </head>
 <body>
@@ -150,9 +137,8 @@
   </div>
 </div>
 
-<footer class="text-center text-brand small py-4 opacity-75">Designed by Sanxithe and Bakano for the Odottemita Community 🌸</footer>
+<footer class="text-center text-brand small py-4 opacity-75">Designed by Sanxithe and Bakano for the Odottemita Community 🌻</footer>
 
-<div id="sunflower" title="🌻">🌻</div>
 <video id="thumbvid" muted playsinline preload="auto" style="position:fixed;left:-9999px;top:0;width:160px;height:90px;opacity:0;pointer-events:none;"></video>
 
 <script src="app.js?v=13"></script>
