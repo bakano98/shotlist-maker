@@ -58,6 +58,19 @@
   #sunflower{position:fixed;right:14px;bottom:10px;font-size:42px;z-index:50;
     filter:drop-shadow(0 2px 3px rgba(0,0,0,.2));animation:sway 4s ease-in-out infinite;}
   @keyframes sway{0%,100%{transform:rotate(-8deg);}50%{transform:rotate(8deg);}}
+
+  /* ponytail: Bootstrap grid already stacks; these only patch touch + small-screen gaps */
+  @media (hover:none){ tr .del{opacity:1;} }          /* no hover on touch → delete was unreachable */
+  @media (max-width:767px){
+    .container-fluid{padding-left:8px;padding-right:8px;}
+    .col-12.col-md-5{padding-left:8px!important;} .col-12.col-md-7{padding-right:8px!important;}
+    video{max-height:30vh;}
+    td img{width:96px!important;height:54px!important;min-width:96px;}
+    th[style*="172px"]{width:108px!important;}
+    .tablewrap{max-height:none;}                        /* drop nested 76vh scroll; let page scroll on phones */
+    tr .del{opacity:1;}                                 /* width-based fallback: hover:none misses emulators/touch laptops */
+    #sunflower{font-size:30px;right:6px;}
+  }
 </style>
 </head>
 <body>
