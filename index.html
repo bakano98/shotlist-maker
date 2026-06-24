@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Shot List 🌸</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --pink:#ff7aa8; --pink-soft:#ffd6e6; --pink-bg:#fff5f9; --butter:#fff3c4;
@@ -22,6 +25,7 @@
   .btn-primary{--bs-btn-bg:var(--pink);--bs-btn-border-color:var(--pink);--bs-btn-hover-bg:#ff5c93;--bs-btn-hover-border-color:#ff5c93;--bs-btn-active-bg:#ff5c93;}
   .btn-outline-primary{--bs-btn-color:var(--pink);--bs-btn-border-color:var(--pink);--bs-btn-hover-bg:var(--pink);--bs-btn-hover-border-color:var(--pink);}
   .text-brand{color:var(--pink)!important;}
+  h1{font-family:'Fredoka',system-ui,sans-serif;font-weight:700;font-size:2rem;letter-spacing:.4px;}
   .stage{position:sticky;top:0;z-index:5;background:linear-gradient(160deg,var(--pink-bg),#fdeaf4);padding-top:6px;}
   video{width:100%;max-height:38vh;border-radius:18px;background:#000;display:block;}
 
@@ -68,7 +72,15 @@
   tr:hover .del{opacity:1;}
 
   /* playback mode: a read-only view — zoom + section nav stay, but all editing is locked */
-  #modeToggle{position:fixed;top:10px;right:10px;z-index:60;}
+  #modeToggle{position:fixed;top:10px;right:10px;z-index:60;display:flex;align-items:center;gap:6px;
+    background:#fff;border:2px solid var(--pink-soft);border-radius:999px;padding:5px 14px;
+    font-family:'Fredoka',system-ui,sans-serif;font-weight:600;color:var(--pink);box-shadow:0 2px 6px rgba(255,122,168,.2);}
+  #modeToggle .mode-name{font-size:.85rem;opacity:.4;transition:opacity .15s;white-space:nowrap;}
+  #modeToggle .mode-name.active{opacity:1;}
+  #modeToggle .form-switch{min-height:auto;padding-left:0;margin:0;display:inline-flex;align-items:center;}
+  #modeToggle .form-check-input{cursor:pointer;margin:0;width:2.1em;height:1.15em;}
+  #modeToggle .form-check-input:checked{background-color:var(--pink);border-color:var(--pink);}
+  #modeToggle .form-check-input:focus{border-color:var(--pink);box-shadow:0 0 0 .2rem var(--pink-soft);}
   body.playback #swap,
   body.playback #addHere,body.playback #add,
   body.playback #addSec,body.playback #delSec,
@@ -76,6 +88,10 @@
   /* hide the example text and stop cells from being clicked/edited */
   body.playback td .form-control::placeholder{color:transparent!important;}
   body.playback td .form-control,body.playback td .form-select{pointer-events:none;}
+  /* pull the timeline, section buttons and table tight together in playback */
+  body.playback .row.g-3{--bs-gutter-y:.35rem;}
+  body.playback #timeline{margin-bottom:.35rem!important;}
+  body.playback #secRow{margin-top:0!important;margin-bottom:.35rem!important;}
 
   /* ponytail: Bootstrap grid already stacks; these only patch touch + small-screen gaps */
   @media (hover:none){ tr .del{opacity:1;} }
@@ -94,13 +110,17 @@
     th:nth-child(7),td:nth-child(7){min-width:150px;}   /* shot type (fits "gimbal freestyle") */
     th:nth-child(8),td:nth-child(8){min-width:160px;}   /* remarks */
     tr .del{opacity:1;}
+    #modeToggle .mode-word{display:none;}               /* icons only on phones */
+    #shotRow{margin-top:0!important;}                   /* no gap between timeline and section buttons */
+    body.playback #timeline{margin-bottom:0!important;}
+    body.playback #secRow{margin-top:0!important;}
   }
-  /* phones + tablets (iPad): fixed column widths — time 80px, camera/focus/remarks 250px */
+  /* phones + tablets (iPad): fixed column widths — time 70px, camera/focus/remarks 180px */
   @media (max-width:1024px){
-    th:nth-child(2),td:nth-child(2){width:80px!important;min-width:80px!important;max-width:80px!important;}   /* time */
-    th:nth-child(5),td:nth-child(5){width:250px!important;min-width:250px!important;max-width:250px!important;} /* camera */
-    th:nth-child(6),td:nth-child(6){width:250px!important;min-width:250px!important;max-width:250px!important;} /* focus */
-    th:nth-child(8),td:nth-child(8){width:250px!important;min-width:250px!important;max-width:250px!important;} /* remarks */
+    th:nth-child(2),td:nth-child(2){width:70px!important;min-width:70px!important;max-width:70px!important;}   /* time */
+    th:nth-child(5),td:nth-child(5){width:180px!important;min-width:180px!important;max-width:180px!important;} /* camera */
+    th:nth-child(6),td:nth-child(6){width:180px!important;min-width:180px!important;max-width:180px!important;} /* focus */
+    th:nth-child(8),td:nth-child(8){width:180px!important;min-width:180px!important;max-width:180px!important;} /* remarks */
   }
 </style>
 </head>
@@ -133,7 +153,7 @@
             <div class="playhead"></div>
           </div>
 
-          <div class="d-flex align-items-center gap-2 mt-3 mb-3 flex-nowrap">
+          <div id="shotRow" class="d-flex align-items-center gap-2 mt-3 mb-3 flex-nowrap">
             <button id="addHere" class="btn btn-sm btn-primary text-nowrap" title="Add shot at playhead">＋ Add shot <small class="opacity-75">(M)</small></button>
             <button id="addSec" class="btn btn-sm btn-outline-success text-nowrap" title="Add section (split here)">＋ Split</button>
             <button id="delSec" class="btn btn-sm btn-outline-success text-nowrap" title="Remove section here">🗑 Remove</button>
@@ -150,7 +170,7 @@
           <table class="table table-sm align-middle mb-0">
             <thead><tr>
               <th style="width:34px;">#</th>
-              <th style="width:92px;">Time</th>
+              <th style="width:78px;">Time</th>
               <th style="width:62px;">Length</th>
               <th style="width:172px;">Thumbnail</th>
               <th>Camera</th>
@@ -174,13 +194,19 @@
   </div>
 </div>
 
-<button id="modeToggle" class="btn btn-sm btn-outline-primary" title="Toggle playback / edit mode">▶ Playback Mode: Off</button>
+<div id="modeToggle" title="Toggle edit / playback mode">
+  <span id="modeEdit" class="mode-name active">✏️<span class="mode-word"> Edit</span></span>
+  <div class="form-switch" id="modeSwitchWrap">
+    <input class="form-check-input" type="checkbox" role="switch" id="modeSwitch">
+  </div>
+  <span id="modePlay" class="mode-name">👁️<span class="mode-word"> Playback</span></span>
+</div>
 
 <footer class="text-center text-brand small py-4 opacity-75">Designed by Sanxithe and Bakano for the Odottemita Community 🌻</footer>
 
 <!-- kept inside the viewport (iOS WebKit won't decode a fully offscreen video) but tiny + near-invisible -->
 <video id="thumbvid" muted playsinline webkit-playsinline preload="auto" style="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;"></video>
 
-<script src="app.js?v=22"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>

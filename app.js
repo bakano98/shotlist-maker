@@ -168,7 +168,7 @@ function renderTable(){
     const timg=td(s.thumb?`<img src="${s.thumb}">`:'<span class="text-muted">…</span>'); if(s.thumb)timg.firstChild.onclick=()=>selectShot(s.id,true);
     // retry if the initial batch (loadeddata) failed to produce a thumb for this shot
     if(!s.thumb && !thumbReq.has(s.id)){ thumbReq.add(s.id); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;renderTable();} else thumbReq.delete(s.id); }); }
-    text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="movement/angle"></textarea>`),s,"move");
+    text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="movement/ angle..."></textarea>`),s,"move");
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="subject…"></textarea>`),s,"focus");
     const sel=td(`<select class="form-select form-select-sm">${SHOT_TYPES.map(t=>`<option ${t===s.type?"selected":""}>${t}</option>`).join("")}</select>`).firstChild;
     sel.onchange=e=>{ s.type=e.target.value; renderTimeline(); save(); };
@@ -280,12 +280,11 @@ function jumpSection(dir){
 }
 $("#prevSec").onclick=()=>jumpSection(-1);
 $("#nextSec").onclick=()=>jumpSection(1);
-$("#modeToggle").onclick=()=>{
-  const on=document.body.classList.toggle("playback");   // on = playback mode, off = edit mode
-  const b=$("#modeToggle");
-  b.textContent=on?"▶ Playback Mode: On":"▶ Playback Mode: Off";
-  b.classList.toggle("btn-primary",on);
-  b.classList.toggle("btn-outline-primary",!on);
+$("#modeSwitch").onchange=e=>{
+  const on=e.target.checked;   // on = playback mode, off = edit mode
+  document.body.classList.toggle("playback",on);
+  $("#modeEdit").classList.toggle("active",!on);
+  $("#modePlay").classList.toggle("active",on);
   if(on){ editId=null; }   // close any open section-rename when locking
   renderTimeline();        // rebuild so marker/section locks take effect immediately
 };
