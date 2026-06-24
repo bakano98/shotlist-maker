@@ -49,7 +49,7 @@
     border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.25);cursor:grab;touch-action:none;z-index:4;}
   .marker.sel{background:#ff3d7f;outline:3px solid var(--butter);}
 
-  .tablewrap{max-height:76vh;overflow:auto;border-radius:16px;border:2px solid var(--pink-soft);background:#fff;}
+  .tablewrap{max-height:76vh;overflow:auto;overscroll-behavior:contain;border-radius:16px;border:2px solid var(--pink-soft);background:#fff;}
   .addrow{position:sticky;left:0;bottom:0;width:100%;border:none;border-top:2px solid #fff;background:var(--pink);color:#fff;
     padding:10px;font-weight:700;z-index:2;box-shadow:0 -3px 8px rgba(255,122,168,.25);}
   .addrow:hover{background:#ff5c93;}
@@ -58,6 +58,8 @@
   td .form-control{border-color:transparent;background:transparent;}
   td .form-control:focus{border-color:var(--pink);background:#fff;box-shadow:none;}
   td textarea{resize:none;overflow:hidden;min-height:32px;white-space:pre-wrap;word-break:break-word;}
+  /* unfilled cells show their example/placeholder text in grey */
+  td .form-control::placeholder{color:#9e9e9e;opacity:1;}
   td .form-select{border:2px solid var(--pink);background-color:#fff;font-weight:600;color:#a02a5a;}
   td .form-select:focus{box-shadow:0 0 0 .2rem var(--pink-soft);}
   td.num{font-weight:700;color:var(--pink);text-align:center;cursor:pointer;}
@@ -65,11 +67,15 @@
   tr .del{opacity:0;}
   tr:hover .del{opacity:1;}
 
-  /* minimised mode: hide section nav, hide zoom controls (zoom locked to 1.0×), hide thead */
-  #miniToggle{position:fixed;top:10px;right:10px;z-index:60;}
-  body.mini #zoomOut,body.mini #zoomIn,body.mini #zoomInfo,body.mini #swap,
-  body.mini #addSec,body.mini #delSec,body.mini #secRow,
-  body.mini thead{display:none!important;}
+  /* playback mode: a read-only view — zoom + section nav stay, but all editing is locked */
+  #modeToggle{position:fixed;top:10px;right:10px;z-index:60;}
+  body.playback #swap,
+  body.playback #addHere,body.playback #add,
+  body.playback #addSec,body.playback #delSec,
+  body.playback td .del{display:none!important;}
+  /* hide the example text and stop cells from being clicked/edited */
+  body.playback td .form-control::placeholder{color:transparent!important;}
+  body.playback td .form-control,body.playback td .form-select{pointer-events:none;}
 
   /* ponytail: Bootstrap grid already stacks; these only patch touch + small-screen gaps */
   @media (hover:none){ tr .del{opacity:1;} }
@@ -88,6 +94,13 @@
     th:nth-child(7),td:nth-child(7){min-width:150px;}   /* shot type (fits "gimbal freestyle") */
     th:nth-child(8),td:nth-child(8){min-width:160px;}   /* remarks */
     tr .del{opacity:1;}
+  }
+  /* phones + tablets (iPad): fixed column widths — time 80px, camera/focus/remarks 250px */
+  @media (max-width:1024px){
+    th:nth-child(2),td:nth-child(2){width:80px!important;min-width:80px!important;max-width:80px!important;}   /* time */
+    th:nth-child(5),td:nth-child(5){width:250px!important;min-width:250px!important;max-width:250px!important;} /* camera */
+    th:nth-child(6),td:nth-child(6){width:250px!important;min-width:250px!important;max-width:250px!important;} /* focus */
+    th:nth-child(8),td:nth-child(8){width:250px!important;min-width:250px!important;max-width:250px!important;} /* remarks */
   }
 </style>
 </head>
@@ -161,13 +174,13 @@
   </div>
 </div>
 
-<button id="miniToggle" class="btn btn-sm btn-outline-primary" title="Toggle minimised mode">⤢</button>
+<button id="modeToggle" class="btn btn-sm btn-outline-primary" title="Toggle playback / edit mode">▶ Playback Mode: Off</button>
 
 <footer class="text-center text-brand small py-4 opacity-75">Designed by Sanxithe and Bakano for the Odottemita Community 🌻</footer>
 
 <!-- kept inside the viewport (iOS WebKit won't decode a fully offscreen video) but tiny + near-invisible -->
 <video id="thumbvid" muted playsinline webkit-playsinline preload="auto" style="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;"></video>
 
-<script src="app.js?v=21"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

@@ -5,6 +5,17 @@ const SHOT_TYPES=["gimbal choreo","gimbal freestyle","static close-up","static w
 const TYPE_COLOR={"static wide":"#bfe3ff","static close-up":"#bfe3ff","gimbal freestyle":"#ffc2dd","gimbal choreo":"#ffc2dd"};
 
 let shots=[], sections=[], selId=null, nextId=1, zoom=1, storeKey=null, dragSec=-1, editId=null;
+const isPlayback=()=>document.body.classList.contains("playback");
+
+// iOS won't let us seek a <video> reliably until it has been played once from a user gesture. The thumbnail grabber
+// also plays a second element off the same blob, which can leave the main player in a stuck "can't seek" state. So on
+// the first touch after a video loads we prime it (gesture-allowed play → pause), which hands seeking back to us.
+let vidPrimed=false;
+function primeVideo(){
+  if(vidPrimed) return; vidPrimed=true;
+  try{ const p=vid.play(); if(p&&p.then) p.then(()=>{ try{vid.pause();}catch{} }).catch(()=>{ vidPrimed=false; }); }
+  catch{ vidPrimed=false; }
+}
 const lastSecTap={};  // keyed by section id; survives timeupdate-triggered re-renders that swap the DOM element
 const thumbReq=new Set();  // shot ids we've already kicked off a thumbnail request for, so renderTable retries don't spin
 
@@ -88,6 +99,10 @@ function load(file){
   shots=[]; selId=null; nextId=1; zoom=1;
   restore();
   $("#drop").classList.add("d-none"); $("#app").classList.remove("d-none");
+  // prime the player on the first touch/click anywhere, so the very first scrub or marker can't break seeking on iOS
+  vidPrimed=false;
+  const primer=()=>{ primeVideo(); document.removeEventListener("pointerdown",primer,true); };
+  document.addEventListener("pointerdown",primer,true);
   render();
 }
 
@@ -104,6 +119,7 @@ thumbVid.addEventListener("loadeddata",()=>{
 });
 
 async function addShot(t){
+  primeVideo();
   const s={id:nextId++, time:clampT(t), move:"", focus:"", type:"static wide", remarks:"", thumb:""};
   shots.push(s); sortShots(); selId=s.id; render(); save();
   const d=await thumbAt(s.time); if(d){ s.thumb=d; render(); }
@@ -202,11 +218,11 @@ function renderTimeline(){
       band.textContent=s.name||"name…"; band.title=s.name||"";
       band.onpointerdown=ev=>ev.stopPropagation();
       band.onclick=()=>{ const now=Date.now();                            // single click: jump to start; double: edit
-        if(now-(lastSecTap[s.id]||0)<350){ lastSecTap[s.id]=0; editId=s.id; renderTimeline(); }
+        if(!isPlayback() && now-(lastSecTap[s.id]||0)<350){ lastSecTap[s.id]=0; editId=s.id; renderTimeline(); }   // rename locked in playback
         else { lastSecTap[s.id]=now; vid.currentTime=clampT(s.start); } };
       timeline.appendChild(band);
     }
-    if(i>0){ const h=document.createElement("div"); h.className="bhandle"; h.style.left=L+"%";
+    if(i>0 && !isPlayback()){ const h=document.createElement("div"); h.className="bhandle"; h.style.left=L+"%";   // boundary drag locked in playback
       h.onpointerdown=ev=>{ ev.stopPropagation(); dragSec=i; }; timeline.appendChild(h); }
   });
   if(keep){ const el=timeline.querySelector('.blabel[data-sid="'+keep.sid+'"]'); if(el){ el.focus(); try{el.setSelectionRange(keep.pos,keep.pos);}catch{} } }
@@ -221,7 +237,10 @@ function renderTimeline(){
 
 function dragMarker(el,s){
   el.addEventListener("pointerdown",e=>{
-    e.stopPropagation(); el.setPointerCapture(e.pointerId); let moved=false;
+    e.stopPropagation();
+    if(isPlayback()){ selectShot(s.id,true); return; }   // locked: tap only seeks, no dragging
+    primeVideo();
+    el.setPointerCapture(e.pointerId); let moved=false;
     el.onpointermove=ev=>{ moved=true; const v=view(); const r=timeline.getBoundingClientRect();
       let x=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
       s.time=clampT(v.start+x*v.vis); sortShots(); el.style.left=pct(s.time,v)+"%"; renderTable(); };
@@ -233,6 +252,7 @@ function dragMarker(el,s){
 
 timeline.addEventListener("pointerdown",e=>{
   if(e.target.closest(".marker"))return;
+  primeVideo();
   timeline.setPointerCapture(e.pointerId); scrub(e);
   timeline.onpointermove=scrub; timeline.onpointerup=()=>{ timeline.onpointermove=null; timeline.onpointerup=null; };
 });
@@ -260,14 +280,18 @@ function jumpSection(dir){
 }
 $("#prevSec").onclick=()=>jumpSection(-1);
 $("#nextSec").onclick=()=>jumpSection(1);
-$("#miniToggle").onclick=()=>{
-  const on=document.body.classList.toggle("mini");
-  $("#miniToggle").textContent=on?"⤡":"⤢";
-  if(on){ setZoom(1); }   // lock zoom to 1.0× in minimised mode
+$("#modeToggle").onclick=()=>{
+  const on=document.body.classList.toggle("playback");   // on = playback mode, off = edit mode
+  const b=$("#modeToggle");
+  b.textContent=on?"▶ Playback Mode: On":"▶ Playback Mode: Off";
+  b.classList.toggle("btn-primary",on);
+  b.classList.toggle("btn-outline-primary",!on);
+  if(on){ editId=null; }   // close any open section-rename when locking
+  renderTimeline();        // rebuild so marker/section locks take effect immediately
 };
 
 timeline.addEventListener("wheel",e=>{ e.preventDefault(); setZoom(zoom*(e.deltaY<0?1.25:0.8)); },{passive:false});
-function setZoom(z){ if(document.body.classList.contains("mini")) z=1; zoom=Math.max(1,Math.min(80,z)); viewStart=null; renderTimeline(); }
+function setZoom(z){ zoom=Math.max(1,Math.min(80,z)); viewStart=null; renderTimeline(); }
 $("#zoomIn").onclick=()=>setZoom(zoom*1.4);
 $("#zoomOut").onclick=()=>setZoom(zoom*0.7);
 
