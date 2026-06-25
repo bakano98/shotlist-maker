@@ -22,8 +22,9 @@ function undo(){
   const st=JSON.parse(undoStack.pop());
   shots=st.shots; sections=st.sections; selId=st.selId;
   editId=null; dragSec=-1; pendingSnap=null; explicitSel=false;
-  render(); save();
-  if(shots.some(s=>!s.thumb)) generateAllThumbs();   // e.g. an un-deleted shot came back without a thumb
+  save();
+  if(shots.some(s=>!s.thumb)) generateAllThumbs();   // sets genRunning before render so the retry path won't double-capture
+  render();
 }
 
 // iOS won't let us seek a <video> reliably until it has been played once from a user gesture. The thumbnail grabber
@@ -66,7 +67,7 @@ function isBlank(ctx,w,h){
 // trick: a muted inline video may play without a user gesture, and *playing* is what forces the decoder to present
 // frames. So we seek, play, grab the first frame at/after the target (rVFC hands us a guaranteed-presented frame),
 // then pause again. Chromium, which fired `seeked` for paused seeks before, keeps working via the same path.
-function capture(t){
+function captureFrame(t){
   return new Promise(res=>{
     let done=false, tmo;
     const target=Math.min(t, thumbVid.duration||t);
@@ -91,24 +92,61 @@ function capture(t){
       }
       if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(onFrame);
     };
-    // also grab once the seek has actually landed (currentTime≈target) — this is the reliable trigger for backward
-    // seeks and for engines without rVFC. Only grab off currentTime once it matches the target, never before, so a
-    // stale pre-seek position can't be mistaken for the real one. A non-blank frame wins; black is left to rVFC/retry.
-    const onSeeked=()=>{ if(done)return; if(Math.abs(thumbVid.currentTime-target)<0.3) setTimeout(()=>{ if(!done) grab(false); },60); };
+    // When the seek lands, re-poll a presented frame through rVFC (which is window-guarded on mediaTime). We must NOT
+    // grab off currentTime directly on rVFC engines: iOS keeps the *previous* shot's frame presented to the canvas for a
+    // beat after a seek, and since it isn't black, a direct grab would silently duplicate it onto the next shot — the
+    // mobile "wrong thumbnail" bug. Only engines without rVFC fall back to a delayed best-effort grab.
+    const hasRVFC=!!thumbVid.requestVideoFrameCallback;
+    const onSeeked=()=>{ if(done)return; if(Math.abs(thumbVid.currentTime-target)>=0.3) return;
+      if(hasRVFC) thumbVid.requestVideoFrameCallback(onFrame);
+      else setTimeout(()=>{ if(!done) grab(false); },80);
+    };
     const cleanup=()=>{ clearTimeout(tmo); thumbVid.removeEventListener("seeked",onSeeked); };
     const finish=v=>{ if(done)return; done=true; cleanup(); try{thumbVid.pause();}catch{} res(v); };
 
     tmo=setTimeout(()=>finish(""),2500);  // self-heal: never leave thumbVid playing if frames never arrive
-    if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(onFrame);
+    if(hasRVFC) thumbVid.requestVideoFrameCallback(onFrame);
     thumbVid.addEventListener("seeked",onSeeked);
     if(Math.abs(thumbVid.currentTime-target)>=0.05) thumbVid.currentTime=target; else onSeeked();
     const p=thumbVid.play(); if(p&&p.catch) p.catch(()=>{});  // muted+playsinline ⇒ allowed; if blocked, seeked-fallback still tries
   });
 }
+// ---- thumbnail decoder lifecycle -----------------------------------------------------------------------------------
+// The hidden thumbnail <video> ties up one of the device's scarce hardware video decoders. We only need it while actually
+// grabbing frames (adding/retiming shots, or the startup/import batch), so its source is attached on demand and detached
+// after a short idle — freeing the decoder so it can't compete with the main player and stutter playback. In playback
+// mode nothing captures, so it stays released the whole time.
+let thumbUrl=null, thumbUses=0, thumbIdle=0;
+function acquireThumb(){
+  if(thumbIdle){ clearTimeout(thumbIdle); thumbIdle=0; }
+  thumbUses++;
+  if(thumbVid.getAttribute("src") && thumbVid.readyState>=2) return Promise.resolve();
+  if(!thumbVid.getAttribute("src") && thumbUrl) thumbVid.src=thumbUrl;
+  return new Promise(res=>{
+    let to; const ok=()=>{ clearTimeout(to); thumbVid.removeEventListener("loadeddata",ok); res(); };
+    to=setTimeout(ok,3000);                              // don't hang if the source never decodes
+    thumbVid.addEventListener("loadeddata",ok);
+    if(thumbVid.readyState>=2) ok();
+  });
+}
+function endThumbUse(){ if(thumbUses>0) thumbUses--; if(thumbUses>0) return;
+  if(thumbIdle) clearTimeout(thumbIdle);
+  thumbIdle=setTimeout(releaseThumb,1500);               // grace period so back-to-back captures don't reload each time
+}
+function releaseThumb(){ thumbIdle=0; if(thumbUses>0) return;
+  try{ thumbVid.pause(); }catch{}
+  if(thumbVid.getAttribute("src")){ thumbVid.removeAttribute("src"); try{ thumbVid.load(); }catch{} }  // detach ⇒ decoder freed
+}
+async function capture(t){
+  await acquireThumb();
+  try{ return await captureFrame(t); }
+  finally{ endThumbUse(); }
+}
 function thumbAt(t){
-  // ponytail: race the chain itself against a hard 2.5s timeout, so one hung capture can't block every future thumbnail
+  // race the chain against a hard timeout so one hung capture can't block every future thumbnail. Allow for a possible
+  // decoder re-acquire (≤3s) on top of the capture (≤2.5s) so a legitimately slow grab isn't cut short.
   const work=thumbChain.then(()=>capture(t));
-  const guarded=Promise.race([work, new Promise(res=>setTimeout(()=>res(""),2500))]);
+  const guarded=Promise.race([work, new Promise(res=>setTimeout(()=>res(""),6000))]);
   thumbChain=guarded;  // future thumbAt calls queue behind the guarded promise, which is guaranteed to resolve
   return guarded;
 }
@@ -122,7 +160,8 @@ function restore(){ if(!storeKey)return; const raw=localStorage.getItem(storeKey
 
 function load(file){
   const url=URL.createObjectURL(file);
-  vid.src=url; thumbVid.src=url;
+  vid.src=url; thumbUrl=url;                 // thumbVid source is attached on demand by acquireThumb(), not held here
+  releaseThumb();                            // drop any decoder left attached from a previous video
   storeKey="shotlist:"+file.name+":"+file.size;
   genRunning=false;   // abort any thumbnail batch still running for a previous video
   shots=[]; selId=null; nextId=1; zoom=1;
@@ -132,7 +171,8 @@ function load(file){
   vidPrimed=false;
   const primer=()=>{ primeVideo(); document.removeEventListener("pointerdown",primer,true); };
   document.addEventListener("pointerdown",primer,true);
-  render();
+  generateAllThumbs();                       // sets genRunning first so renderTable's retry path won't race the batch
+  render();                                  // fills restored shots' thumbnails; decoder is released once the batch ends
 }
 
 $("#drop").onclick=()=>$("#file").click();
@@ -140,8 +180,6 @@ $("#file").onchange=e=>{ if(e.target.files[0]) load(e.target.files[0]); };
 $("#drop").ondragover=e=>e.preventDefault();
 $("#drop").ondrop=e=>{ e.preventDefault(); if(e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); };
 $("#swap").onclick=()=>$("#file").click();
-
-thumbVid.addEventListener("loadeddata",()=>{ generateAllThumbs(); });
 
 // Batch thumbnailer for a restored/imported session: capture each pending shot one at a time, in time order, awaiting
 // each before the next. Doing them strictly serially (rather than firing them all at once) is what stops the captures
@@ -157,8 +195,12 @@ async function generateAllThumbs(){
       if(!ordered.length) break;
       for(const shot of ordered){
         if(!genRunning) return;                  // aborted (e.g. a new video was loaded)
+        // The thumbnail grabber drives a second hidden <video>; decoding it while the main player is running fights over
+        // the device's limited video decoders and makes playback stutter on mobile. Hold off until the user pauses.
+        while(!vid.paused && !vid.ended && genRunning){ await new Promise(r=>setTimeout(r,250)); }
+        if(!genRunning) return;
         const d=await capture(shot.time);
-        if(d){ shot.thumb=d; renderTable(); }
+        if(d){ shot.thumb=d; setThumb(shot); }
       }
     }
   } finally { genRunning=false; }
@@ -198,6 +240,18 @@ function selectShot(id,seek){ selId=id; explicitSel=true; const s=shots.find(x=>
 }
 
 const render=()=>{ renderTable(); renderTimeline(); };
+// Coalesce drag-driven rebuilds to at most one per frame, so a burst of pointermove events can't queue dozens of them.
+let rafTable=0, rafTimeline=0;
+const scheduleTable=()=>{ if(!rafTable) rafTable=requestAnimationFrame(()=>{ rafTable=0; renderTable(); }); };
+const scheduleTimeline=()=>{ if(!rafTimeline) rafTimeline=requestAnimationFrame(()=>{ rafTimeline=0; renderTimeline(); }); };
+// Update just one row's thumbnail cell instead of rebuilding the whole table — used by the startup batch (was N full
+// table rebuilds, one per captured thumb).
+function setThumb(s){
+  const tr=rows.querySelector('tr[data-id="'+s.id+'"]'); if(!tr){ renderTable(); return; }
+  const cell=tr.children[3]; if(!cell) return;
+  cell.innerHTML=s.thumb?`<img src="${s.thumb}">`:'<span class="text-muted">…</span>';
+  if(s.thumb) cell.firstChild.onclick=()=>selectShot(s.id,true);
+}
 function scrollToRow(id){
   const tr=rows.querySelector('tr[data-id="'+id+'"]'); if(!tr)return;
   const wrap=$(".tablewrap"), thead=wrap.querySelector("thead");
@@ -215,7 +269,7 @@ function renderTable(){
     td(durOf(i).toFixed(1)+"s","text-center text-brand");
     const timg=td(s.thumb?`<img src="${s.thumb}">`:'<span class="text-muted">…</span>'); if(s.thumb)timg.firstChild.onclick=()=>selectShot(s.id,true);
     // retry if the initial batch (loadeddata) failed to produce a thumb for this shot
-    if(!s.thumb && !thumbReq.has(s.id)){ thumbReq.add(s.id); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;renderTable();} else thumbReq.delete(s.id); }); }
+    if(!s.thumb && !thumbReq.has(s.id) && !genRunning){ thumbReq.add(s.id); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;setThumb(s);} else thumbReq.delete(s.id); }); }  // don't race the batch
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="movement/ angle..."></textarea>`),s,"move");
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="subject…"></textarea>`),s,"focus");
     const sel=td(`<select class="form-select form-select-sm">${SHOT_TYPES.map(t=>`<option ${t===s.type?"selected":""}>${t}</option>`).join("")}</select>`).firstChild;
@@ -225,14 +279,25 @@ function renderTable(){
     tr.onclick=e=>{ if(!e.target.closest("input,select,textarea,button")) selectShot(s.id,false); };
     rows.appendChild(tr);
   });
-  rows.querySelectorAll("textarea").forEach(autogrow);
+  autogrowAll(rows.querySelectorAll("textarea"));
 }
 const autogrow=t=>{ t.style.height="auto"; t.style.height=t.scrollHeight+"px"; };
+// Sizing every textarea individually thrashed layout (write→read per element = one forced reflow each — ~36ms for 40
+// rows). Batch it: all writes, then all reads (a single reflow), then all writes. This is the biggest renderTable win.
+function autogrowAll(list){
+  const tas=[...list]; if(!tas.length) return;
+  for(const t of tas) t.style.height="auto";
+  const hs=tas.map(t=>t.scrollHeight);
+  tas.forEach((t,i)=>{ t.style.height=hs[i]+"px"; });
+}
 function text(cell,s,key){ const inp=cell.firstChild; inp.value=s[key];
   inp.onfocus=()=>beginAction();                                   // remember pre-edit state for undo
   inp.oninput=e=>{ commitAction(); s[key]=e.target.value; autogrow(inp); save(); }; }   // record once, on first keystroke
 
-function highlight(){ rows.querySelectorAll("tr").forEach(tr=>tr.classList.toggle("shot-sel", +tr.dataset.id===selId)); }
+function highlight(){
+  rows.querySelectorAll("tr").forEach(tr=>tr.classList.toggle("shot-sel", +tr.dataset.id===selId));
+  timeline.querySelectorAll(".marker").forEach(m=>m.classList.toggle("sel", +m.dataset.id===selId));   // keep timeline markers in sync without a full rebuild
+}
 
 const TICK_STEPS=[0.1,0.25,0.5,1,2,5,10,15,30,60,120,300];
 function renderTimeline(){
@@ -279,7 +344,7 @@ function renderTimeline(){
   else if(editId!=null){ const el=timeline.querySelector('.blabel[data-sid="'+editId+'"]'); if(el){ el.focus(); el.select(); } }
   shots.forEach((s,i)=>{
     if(s.time<v.start-0.01||s.time>v.end+0.01)return;
-    const m=document.createElement("div"); m.className="marker"+(s.id===selId?" sel":""); m.textContent=i+1;
+    const m=document.createElement("div"); m.className="marker"+(s.id===selId?" sel":""); m.dataset.id=s.id; m.textContent=i+1;
     m.style.background=TYPE_COLOR[s.type]||"var(--pink)"; m.style.color="#3a2a33";
     m.style.left=pct(s.time,v)+"%"; dragMarker(m,s); timeline.appendChild(m);
   });
@@ -293,9 +358,9 @@ function dragMarker(el,s){
     el.setPointerCapture(e.pointerId); let moved=false;
     el.onpointermove=ev=>{ if(!moved) commitAction(); moved=true; const v=view(); const r=timeline.getBoundingClientRect();
       let x=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
-      s.time=clampT(v.start+x*v.vis); sortShots(); el.style.left=pct(s.time,v)+"%"; renderTable(); };
+      s.time=clampT(v.start+x*v.vis); sortShots(); el.style.left=pct(s.time,v)+"%"; scheduleTable(); };  // table rebuild ≤1/frame
     el.onpointerup=()=>{ el.onpointermove=null; el.onpointerup=null;
-      if(moved){ render(); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;render();} }); save(); }
+      if(moved){ if(rafTable){ cancelAnimationFrame(rafTable); rafTable=0; } render(); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;render();} }); save(); }
       else selectShot(s.id,true); };
   });
 }
@@ -319,9 +384,9 @@ document.addEventListener("pointermove",e=>{
   const v=view(), r=timeline.getBoundingClientRect();
   let x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)), t=v.start+x*v.vis;
   const lo=sections[dragSec-1].start+0.02, hi=(dragSec+1<sections.length?sections[dragSec+1].start:(vid.duration||t))-0.02;
-  sections[dragSec].start=Math.max(lo,Math.min(hi,t)); renderTimeline();
+  sections[dragSec].start=Math.max(lo,Math.min(hi,t)); scheduleTimeline();   // ≤1 rebuild/frame while dragging
 });
-document.addEventListener("pointerup",()=>{ if(dragSec>=0){ dragSec=-1; save(); } });
+document.addEventListener("pointerup",()=>{ if(dragSec>=0){ dragSec=-1; if(rafTimeline){ cancelAnimationFrame(rafTimeline); rafTimeline=0; } renderTimeline(); save(); } });
 $("#addSec").onclick=addSection;
 $("#delSec").onclick=removeSection;
 function jumpSection(dir){
@@ -337,7 +402,7 @@ $("#modeSwitch").onchange=e=>{
   document.body.classList.toggle("playback",on);
   $("#modeEdit").classList.toggle("active",!on);
   $("#modePlay").classList.toggle("active",on);
-  if(on){ editId=null; }   // close any open section-rename when locking
+  if(on){ editId=null; releaseThumb(); }   // close any open rename + free the thumbnail decoder (no captures in playback)
   renderTimeline();        // rebuild so marker/section locks take effect immediately
 };
 
@@ -346,8 +411,15 @@ function setZoom(z){ zoom=Math.max(1,Math.min(80,z)); viewStart=null; renderTime
 $("#zoomIn").onclick=()=>setZoom(zoom*1.4);
 $("#zoomOut").onclick=()=>setZoom(zoom*0.7);
 
+// Move only the playhead/played fill — the cheap per-frame update (~0.01ms vs ~0.4ms+ to rebuild every tick/marker/band).
+function movePlayhead(v){ v=v||view();
+  played.style.width=Math.max(0,Math.min(100,pct(vid.currentTime,v)))+"%";
+  playhead.style.left=pct(vid.currentTime,v)+"%";
+}
 vid.addEventListener("timeupdate",()=>{
-  renderTimeline();
+  const prevStart=viewStart; const v=view();           // view() re-centers only when the playhead leaves the window
+  if(viewStart!==prevStart) renderTimeline();           // window scrolled → ticks/markers/bands must reposition
+  else movePlayhead(v);                                 // common case: nothing structural changed, just glide the playhead
   let cur=-1; for(let i=0;i<shots.length;i++) if(shots[i].time<=vid.currentTime+0.05) cur=i;
   if(cur>=0 && shots[cur].id!==selId){ selId=shots[cur].id; explicitSel=false; highlight(); scrollToRow(selId); }   // auto-highlight ≠ user selection
 });
@@ -376,8 +448,8 @@ function importCSV(file){
     shots=rows.map(c=>({ id:nextId++, time:clampT(parseTime(c[1])),
       move:c[3]||"", focus:c[4]||"", type:SHOT_TYPES.includes(c[5])?c[5]:"static wide",
       remarks:c[6]||"", thumb:"" }));
-    sortShots(); selId=null; render(); save();
-    generateAllThumbs();
+    sortShots(); selId=null; save();
+    generateAllThumbs(); render();
   };
   r.readAsText(file);
 }

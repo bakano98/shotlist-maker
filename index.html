@@ -111,7 +111,7 @@
     th:nth-child(8),td:nth-child(8){min-width:160px;}   /* remarks */
     tr .del{opacity:1;}
     #modeToggle .mode-word{display:none;}               /* icons only on phones */
-    #shotRow{margin-top:0!important;}                   /* no gap between timeline and section buttons */
+    /* tighten timeline ↔ section buttons in PLAYBACK only; edit mode keeps its normal spacing */
     body.playback #timeline{margin-bottom:0!important;}
     body.playback #secRow{margin-top:0!important;}
   }
@@ -207,6 +207,6 @@
 <!-- kept inside the viewport (iOS WebKit won't decode a fully offscreen video) but tiny + near-invisible -->
 <video id="thumbvid" muted playsinline webkit-playsinline preload="auto" style="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;"></video>
 
-<script src="app.js?v=28"></script>
+<script src="app.js?v=31"></script>
 </body>
 </html>
