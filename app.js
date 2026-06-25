@@ -6,6 +6,25 @@ const TYPE_COLOR={"static wide":"#bfe3ff","static close-up":"#bfe3ff","gimbal fr
 
 let shots=[], sections=[], selId=null, nextId=1, zoom=1, storeKey=null, dragSec=-1, editId=null;
 const isPlayback=()=>document.body.classList.contains("playback");
+let explicitSel=false;   // true only when the user actually clicked a marker or a shot row — not auto-highlight or scrub
+
+// ---- undo (Ctrl/Cmd+Z) ----------------------------------------------------------------------------------------------
+// One snapshot of {shots,sections,selId} per discrete action. Continuous edits (typing in a cell, dragging a marker or a
+// section boundary) record a single snapshot taken BEFORE the edit began: beginAction() stashes it, commitAction() pushes
+// it on the first real change. Thumbs ride along in the snapshot so undo restores them instantly.
+const undoStack=[]; let pendingSnap=null;
+const snapshot=()=>JSON.stringify({shots, sections, selId});
+function pushUndo(){ undoStack.push(snapshot()); if(undoStack.length>40) undoStack.shift(); pendingSnap=null; }
+function beginAction(){ pendingSnap=snapshot(); }
+function commitAction(){ if(pendingSnap){ undoStack.push(pendingSnap); if(undoStack.length>40) undoStack.shift(); pendingSnap=null; } }
+function undo(){
+  if(!undoStack.length) return;
+  const st=JSON.parse(undoStack.pop());
+  shots=st.shots; sections=st.sections; selId=st.selId;
+  editId=null; dragSec=-1; pendingSnap=null; explicitSel=false;
+  render(); save();
+  if(shots.some(s=>!s.thumb)) generateAllThumbs();   // e.g. an un-deleted shot came back without a thumb
+}
 
 // iOS won't let us seek a <video> reliably until it has been played once from a user gesture. The thumbnail grabber
 // also plays a second element off the same blob, which can leave the main player in a stuck "can't seek" state. So on
@@ -58,22 +77,31 @@ function capture(t){
         finish(c.toDataURL("image/jpeg",0.7)); return true;
       }catch{ finish(""); return true; }  // secured/tainted canvas: bail rather than hang
     };
-    // rVFC delivers a frame that is already presented, so once mediaTime reaches the target it's safe to grab as-is
+    // rVFC delivers a frame already presented, with its real presentation time in meta.mediaTime. Only accept a frame
+    // whose mediaTime sits in a window AT/just-after the target. This is the crucial guard for batch (reopen) capture:
+    // when seeking *backward* to an earlier shot, the still-presented pre-seek frame has a far larger mediaTime, so a
+    // plain `>=target` test would grab that stale frame — which is exactly why every reopened thumbnail came out the
+    // same. Bounding the window above rejects it and we wait for the seek to actually land. Cold decoders can hand back
+    // black for the first few frames, so reject blanks and keep pulling until one presents (or a small budget runs out).
+    let blanks=0;
     const onFrame=(now,meta)=>{ if(done)return;
-      if(meta.mediaTime>=target-0.05){ grab(true); return; }
+      if(meta.mediaTime>=target-0.05 && meta.mediaTime<=target+0.6){
+        if(grab(false)) return;                  // captured a real, non-blank frame at the target
+        if(++blanks>=10){ grab(true); return; }  // decoder kept handing back black — take what we have rather than hang
+      }
       if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(onFrame);
     };
-    // fallback for engines without rVFC: presentation isn't guaranteed here, so reject obviously-black frames
-    const onProgress=()=>{ if(done)return; if(thumbVid.currentTime>=target-0.05) grab(false); };
-    const cleanup=()=>{ clearTimeout(tmo);
-      thumbVid.removeEventListener("timeupdate",onProgress); thumbVid.removeEventListener("seeked",onProgress); };
+    // also grab once the seek has actually landed (currentTime≈target) — this is the reliable trigger for backward
+    // seeks and for engines without rVFC. Only grab off currentTime once it matches the target, never before, so a
+    // stale pre-seek position can't be mistaken for the real one. A non-blank frame wins; black is left to rVFC/retry.
+    const onSeeked=()=>{ if(done)return; if(Math.abs(thumbVid.currentTime-target)<0.3) setTimeout(()=>{ if(!done) grab(false); },60); };
+    const cleanup=()=>{ clearTimeout(tmo); thumbVid.removeEventListener("seeked",onSeeked); };
     const finish=v=>{ if(done)return; done=true; cleanup(); try{thumbVid.pause();}catch{} res(v); };
 
-    tmo=setTimeout(()=>finish(""),2000);  // self-heal: never leave thumbVid playing if frames never arrive
-    thumbVid.addEventListener("timeupdate",onProgress);
-    thumbVid.addEventListener("seeked",onProgress);
+    tmo=setTimeout(()=>finish(""),2500);  // self-heal: never leave thumbVid playing if frames never arrive
     if(thumbVid.requestVideoFrameCallback) thumbVid.requestVideoFrameCallback(onFrame);
-    if(Math.abs(thumbVid.currentTime-target)>=0.05) thumbVid.currentTime=target;
+    thumbVid.addEventListener("seeked",onSeeked);
+    if(Math.abs(thumbVid.currentTime-target)>=0.05) thumbVid.currentTime=target; else onSeeked();
     const p=thumbVid.play(); if(p&&p.catch) p.catch(()=>{});  // muted+playsinline ⇒ allowed; if blocked, seeked-fallback still tries
   });
 }
@@ -96,6 +124,7 @@ function load(file){
   const url=URL.createObjectURL(file);
   vid.src=url; thumbVid.src=url;
   storeKey="shotlist:"+file.name+":"+file.size;
+  genRunning=false;   // abort any thumbnail batch still running for a previous video
   shots=[]; selId=null; nextId=1; zoom=1;
   restore();
   $("#drop").classList.add("d-none"); $("#app").classList.remove("d-none");
@@ -112,16 +141,33 @@ $("#drop").ondragover=e=>e.preventDefault();
 $("#drop").ondrop=e=>{ e.preventDefault(); if(e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); };
 $("#swap").onclick=()=>$("#file").click();
 
-thumbVid.addEventListener("loadeddata",()=>{
-  // ponytail: iOS Safari won't decode frames for canvas until the video has actually run once; play+pause unlocks it
-  thumbVid.play().then(()=>thumbVid.pause()).catch(()=>{});
-  shots.forEach(s=>{ if(!s.thumb) thumbAt(s.time).then(d=>{ if(d){s.thumb=d;renderTable();} }); });
-});
+thumbVid.addEventListener("loadeddata",()=>{ generateAllThumbs(); });
+
+// Batch thumbnailer for a restored/imported session: capture each pending shot one at a time, in time order, awaiting
+// each before the next. Doing them strictly serially (rather than firing them all at once) is what stops the captures
+// from racing over the single hidden <video> — which on a cold reopen produced black or duplicated thumbnails. A second
+// pass mops up any that transiently timed out to empty. Restored shots arrive with empty thumbs, so they refill here.
+let genRunning=false;
+async function generateAllThumbs(){
+  if(genRunning) return;
+  genRunning=true;
+  try{
+    for(let pass=0; pass<2; pass++){
+      const ordered=shots.filter(s=>!s.thumb).sort((a,b)=>a.time-b.time);
+      if(!ordered.length) break;
+      for(const shot of ordered){
+        if(!genRunning) return;                  // aborted (e.g. a new video was loaded)
+        const d=await capture(shot.time);
+        if(d){ shot.thumb=d; renderTable(); }
+      }
+    }
+  } finally { genRunning=false; }
+}
 
 async function addShot(t){
-  primeVideo();
+  primeVideo(); pushUndo();
   const s={id:nextId++, time:clampT(t), move:"", focus:"", type:"static wide", remarks:"", thumb:""};
-  shots.push(s); sortShots(); selId=s.id; render(); save();
+  shots.push(s); sortShots(); selId=s.id; explicitSel=false; render(); save();
   const d=await thumbAt(s.time); if(d){ s.thumb=d; render(); }
 }
 function endTime(){ if(!shots.length) return vid.currentTime; const last=shots[shots.length-1].time; return Math.min(last+5, vid.duration||last+5); }
@@ -132,6 +178,7 @@ function sectionIndexAt(t){ let idx=-1; for(let i=0;i<sections.length;i++) if(se
 function addSection(){
   const t=vid.currentTime, dur=vid.duration||0;
   if(t<=0.05 || (dur && t>=dur-0.05)) return;
+  pushUndo();
   if(!sections.length) sections=[{id:nextId++,start:0,name:""}];
   if(!sections.some(s=>Math.abs(s.start-t)<0.05)) sections.push({id:nextId++,start:t,name:""});
   sortSections(); renderTimeline(); save();
@@ -139,12 +186,13 @@ function addSection(){
 function removeSection(){
   if(!sections.length) return;
   const i=sectionIndexAt(vid.currentTime); if(i<0) return;
+  pushUndo();
   sections.splice(i,1);
   if(sections.length && sections[0].start>0.0001) sections[0].start=0;
   renderTimeline(); save();
 }
-function del(id){ shots=shots.filter(s=>s.id!==id); if(selId===id)selId=null; render(); save(); }
-function selectShot(id,seek){ selId=id; const s=shots.find(x=>x.id===id);
+function del(id){ pushUndo(); shots=shots.filter(s=>s.id!==id); if(selId===id)selId=null; explicitSel=false; render(); save(); }
+function selectShot(id,seek){ selId=id; explicitSel=true; const s=shots.find(x=>x.id===id);
   if(s&&seek) vid.currentTime=s.time;
   highlight(); renderTimeline(); scrollToRow(id);
 }
@@ -171,7 +219,7 @@ function renderTable(){
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="movement/ angle..."></textarea>`),s,"move");
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="subject…"></textarea>`),s,"focus");
     const sel=td(`<select class="form-select form-select-sm">${SHOT_TYPES.map(t=>`<option ${t===s.type?"selected":""}>${t}</option>`).join("")}</select>`).firstChild;
-    sel.onchange=e=>{ s.type=e.target.value; renderTimeline(); save(); };
+    sel.onchange=e=>{ pushUndo(); s.type=e.target.value; renderTimeline(); save(); };
     text(td(`<textarea class="form-control form-control-sm" rows="1" placeholder="notes…"></textarea>`),s,"remarks");
     const d=td('<button class="btn btn-sm text-danger del" title="delete">✕</button>').firstChild; d.onclick=()=>del(s.id);
     tr.onclick=e=>{ if(!e.target.closest("input,select,textarea,button")) selectShot(s.id,false); };
@@ -180,7 +228,9 @@ function renderTable(){
   rows.querySelectorAll("textarea").forEach(autogrow);
 }
 const autogrow=t=>{ t.style.height="auto"; t.style.height=t.scrollHeight+"px"; };
-function text(cell,s,key){ const inp=cell.firstChild; inp.value=s[key]; inp.oninput=e=>{ s[key]=e.target.value; autogrow(inp); save(); }; }
+function text(cell,s,key){ const inp=cell.firstChild; inp.value=s[key];
+  inp.onfocus=()=>beginAction();                                   // remember pre-edit state for undo
+  inp.oninput=e=>{ commitAction(); s[key]=e.target.value; autogrow(inp); save(); }; }   // record once, on first keystroke
 
 function highlight(){ rows.querySelectorAll("tr").forEach(tr=>tr.classList.toggle("shot-sel", +tr.dataset.id===selId)); }
 
@@ -207,7 +257,7 @@ function renderTimeline(){
       inp.value=s.name; inp.placeholder="name…";
       inp.style.left=Math.max(0,L)+"%"; inp.style.width=Math.max(0,R-L)+"%";
       inp.onpointerdown=ev=>ev.stopPropagation();
-      inp.oninput=ev=>{ s.name=ev.target.value; };
+      inp.oninput=ev=>{ commitAction(); s.name=ev.target.value; };   // record the pre-rename state once
       const commit=()=>{ if(editId!==s.id)return; editId=null; s.name=s.name.trim(); save(); renderTimeline(); };
       inp.onkeydown=ev=>{ if(ev.key==="Enter"){ev.preventDefault();commit();} else if(ev.key==="Escape"){editId=null;renderTimeline();} };
       inp.onblur=commit;
@@ -218,12 +268,12 @@ function renderTimeline(){
       band.textContent=s.name||"name…"; band.title=s.name||"";
       band.onpointerdown=ev=>ev.stopPropagation();
       band.onclick=()=>{ const now=Date.now();                            // single click: jump to start; double: edit
-        if(!isPlayback() && now-(lastSecTap[s.id]||0)<350){ lastSecTap[s.id]=0; editId=s.id; renderTimeline(); }   // rename locked in playback
+        if(!isPlayback() && now-(lastSecTap[s.id]||0)<350){ lastSecTap[s.id]=0; beginAction(); editId=s.id; renderTimeline(); }   // rename locked in playback
         else { lastSecTap[s.id]=now; vid.currentTime=clampT(s.start); } };
       timeline.appendChild(band);
     }
     if(i>0 && !isPlayback()){ const h=document.createElement("div"); h.className="bhandle"; h.style.left=L+"%";   // boundary drag locked in playback
-      h.onpointerdown=ev=>{ ev.stopPropagation(); dragSec=i; }; timeline.appendChild(h); }
+      h.onpointerdown=ev=>{ ev.stopPropagation(); beginAction(); dragSec=i; }; timeline.appendChild(h); }
   });
   if(keep){ const el=timeline.querySelector('.blabel[data-sid="'+keep.sid+'"]'); if(el){ el.focus(); try{el.setSelectionRange(keep.pos,keep.pos);}catch{} } }
   else if(editId!=null){ const el=timeline.querySelector('.blabel[data-sid="'+editId+'"]'); if(el){ el.focus(); el.select(); } }
@@ -239,9 +289,9 @@ function dragMarker(el,s){
   el.addEventListener("pointerdown",e=>{
     e.stopPropagation();
     if(isPlayback()){ selectShot(s.id,true); return; }   // locked: tap only seeks, no dragging
-    primeVideo();
+    primeVideo(); beginAction();
     el.setPointerCapture(e.pointerId); let moved=false;
-    el.onpointermove=ev=>{ moved=true; const v=view(); const r=timeline.getBoundingClientRect();
+    el.onpointermove=ev=>{ if(!moved) commitAction(); moved=true; const v=view(); const r=timeline.getBoundingClientRect();
       let x=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));
       s.time=clampT(v.start+x*v.vis); sortShots(); el.style.left=pct(s.time,v)+"%"; renderTable(); };
     el.onpointerup=()=>{ el.onpointermove=null; el.onpointerup=null;
@@ -253,6 +303,7 @@ function dragMarker(el,s){
 timeline.addEventListener("pointerdown",e=>{
   if(e.target.closest(".marker"))return;
   primeVideo();
+  explicitSel=false;   // scrubbing empty timeline is not a shot selection — Delete must not remove the auto-highlighted shot
   timeline.setPointerCapture(e.pointerId); scrub(e);
   timeline.onpointermove=scrub; timeline.onpointerup=()=>{ timeline.onpointermove=null; timeline.onpointerup=null; };
 });
@@ -264,6 +315,7 @@ function scrub(e){ const v=view(); const r=timeline.getBoundingClientRect();
 
 document.addEventListener("pointermove",e=>{
   if(dragSec<0) return;
+  commitAction();   // first move of this drag records the pre-drag state
   const v=view(), r=timeline.getBoundingClientRect();
   let x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)), t=v.start+x*v.vis;
   const lo=sections[dragSec-1].start+0.02, hi=(dragSec+1<sections.length?sections[dragSec+1].start:(vid.duration||t))-0.02;
@@ -297,12 +349,12 @@ $("#zoomOut").onclick=()=>setZoom(zoom*0.7);
 vid.addEventListener("timeupdate",()=>{
   renderTimeline();
   let cur=-1; for(let i=0;i<shots.length;i++) if(shots[i].time<=vid.currentTime+0.05) cur=i;
-  if(cur>=0 && shots[cur].id!==selId){ selId=shots[cur].id; highlight(); scrollToRow(selId); }
+  if(cur>=0 && shots[cur].id!==selId){ selId=shots[cur].id; explicitSel=false; highlight(); scrollToRow(selId); }   // auto-highlight ≠ user selection
 });
 vid.addEventListener("loadedmetadata",renderTimeline);
 
 function retime(s,t){ if(!isFinite(t)){ renderTable(); return; }   // reject bad input; re-render restores the displayed fmt(s.time)
-  s.time=clampT(t); sortShots(); render(); save(); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;render();} }); }
+  pushUndo(); s.time=clampT(t); sortShots(); render(); save(); thumbAt(s.time).then(d=>{ if(d){s.thumb=d;render();} }); }
 
 // ponytail: char-by-char parser, not split(",") — exported fields are quoted and can hold commas/quotes/newlines
 function parseCSV(text){
@@ -325,7 +377,7 @@ function importCSV(file){
       move:c[3]||"", focus:c[4]||"", type:SHOT_TYPES.includes(c[5])?c[5]:"static wide",
       remarks:c[6]||"", thumb:"" }));
     sortShots(); selId=null; render(); save();
-    shots.forEach(s=>thumbAt(s.time).then(d=>{s.thumb=d;renderTable();}));
+    generateAllThumbs();
   };
   r.readAsText(file);
 }
@@ -360,7 +412,15 @@ $("#exportPdf").onclick=()=>{
 };
 
 document.addEventListener("keydown",e=>{
-  if(e.key.toLowerCase()==="m" && !/input|select|textarea/i.test(e.target.tagName) && !$("#app").classList.contains("d-none")){ e.preventDefault(); addShot(vid.currentTime); }
+  if($("#app").classList.contains("d-none")) return;                 // no video loaded yet
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="z" && !e.shiftKey){ e.preventDefault(); undo(); return; }  // works even mid-edit
+  if(/input|select|textarea/i.test(e.target.tagName)) return;        // don't hijack keys while typing in a cell
+  if(e.key.toLowerCase()==="m"){ e.preventDefault(); addShot(vid.currentTime); return; }
+  if((e.key==="Delete"||e.key==="Backspace") && selId!=null && explicitSel && !isPlayback()){ e.preventDefault(); del(selId); return; }  // only a shot the user actually clicked; locked in playback
+  if(e.key===" "||e.code==="Space"){                                 // play/pause the video
+    if(e.target===vid) return;                                       // let the native player toggle itself when it's focused
+    e.preventDefault(); if(vid.paused) vid.play(); else vid.pause();
+  }
 });
 
 (()=>{ const r=parseCSV('"a","b,c","d""e"\n"x","y\nz","w"');
